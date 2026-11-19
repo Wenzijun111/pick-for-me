@@ -12643,7 +12643,9 @@ window.PF_CONFIG = {
           '<a class="btn btn-primary" href="' + esc(next || '#/me') + '">继续</a>');
     }
 
-    var tabs = '' +
+    /* 配了云端账号就只留邮箱一种：否则用户会停在手机号上，输完邮箱被告知要切换 */
+    var cloudAuth = !!(window.PFAuth && window.PFAuth.enabled());
+    var tabs = cloudAuth ? '' : '' +
       '<div class="auth-tabs" role="tablist">' +
         '<button type="button" class="auth-tab is-on" data-method="phone">手机验证码</button>' +
         '<button type="button" class="auth-tab" data-method="email">邮箱</button>' +
@@ -12657,24 +12659,32 @@ window.PF_CONFIG = {
           tabs +
 
           '<div class="field">' +
-            '<label for="lgContact" id="lgContactLabel">手机号</label>' +
-            '<input class="input" id="lgContact" name="contact" inputmode="numeric" ' +
-                   'placeholder="11 位手机号" autocomplete="tel">' +
+            '<label for="lgContact" id="lgContactLabel">' + (cloudAuth ? '邮箱' : '手机号') + '</label>' +
+            (cloudAuth
+              ? '<input class="input" id="lgContact" name="contact" type="email" ' +
+                'placeholder="you@example.com" autocomplete="email">'
+              : '<input class="input" id="lgContact" name="contact" inputmode="numeric" ' +
+                'placeholder="11 位手机号" autocomplete="tel">') +
           '</div>' +
 
           '<div class="field">' +
-            '<label for="lgSecret" id="lgSecretLabel">验证码</label>' +
+            '<label for="lgSecret" id="lgSecretLabel">' + (cloudAuth ? '密码' : '验证码') + '</label>' +
             '<div class="setting-row">' +
-              '<input class="input" id="lgSecret" name="secret" inputmode="numeric" ' +
-                     'placeholder="6 位数字" autocomplete="one-time-code">' +
-              '<button type="button" class="btn btn-line btn-sm" id="sendCode">获取验证码</button>' +
+              (cloudAuth
+                ? '<input class="input" id="lgSecret" name="secret" type="password" ' +
+                  'placeholder="至少 6 位" autocomplete="current-password">'
+                : '<input class="input" id="lgSecret" name="secret" inputmode="numeric" ' +
+                  'placeholder="6 位数字" autocomplete="one-time-code">') +
+              (cloudAuth ? '' : '<button type="button" class="btn btn-line btn-sm" id="sendCode">获取验证码</button>') +
             '</div>' +
           '</div>' +
 
           '<div class="field" id="lgNameField">' +
             '<label for="lgName">昵称（可选）</label>' +
             '<input class="input" id="lgName" name="name" maxlength="16" ' +
-                   'placeholder="新账号的显示名，默认按手机号后四位">' +
+                   (cloudAuth
+                     ? 'placeholder="新账号的显示名，默认取邮箱前缀">'
+                     : 'placeholder="新账号的显示名，默认按手机号后四位">') +
             '<div class="desc">昵称会显示在实名投票里，之后可以在「我的 → 设置」改。</div>' +
           '</div>' +
 
@@ -12683,11 +12693,14 @@ window.PF_CONFIG = {
             '<a class="btn btn-line" href="#/">先去逛逛</a>' +
           '</div>' +
 
-          '<p class="auth-demo">' +
-            '演示环境不发短信。用手机号 <b>' + esc(Store.DEMO_CONTACT) + '</b> + 验证码 ' +
-            '<b>123456</b> 登录，会绑到带历史投票记录的演示账号；' +
-            '换任意其它手机号 / 邮箱登录，会新建一个没有历史票的新账号，正好能试出门槛拦截。' +
-          '</p>' +
+          (cloudAuth
+            ? '<p class="auth-demo">第一次用这个邮箱会自动注册，密码至少 6 位。' +
+              '换一台设备用同一个邮箱和密码登录，看到的是同一份数据。</p>'
+            : '<p class="auth-demo">' +
+              '演示环境不发短信。用手机号 <b>' + esc(Store.DEMO_CONTACT) + '</b> + 验证码 ' +
+              '<b>123456</b> 登录，会绑到带历史投票记录的演示账号；' +
+              '换任意其它手机号 / 邮箱登录，会新建一个没有历史票的新账号，正好能试出门槛拦截。' +
+              '</p>') +
         '</form>' +
 
         '<div class="auth-side">' +
@@ -12703,7 +12716,7 @@ window.PF_CONFIG = {
   }
 
   function bindLogin(root, rerender) {
-    var method = 'phone';
+    var method = (window.PFAuth && window.PFAuth.enabled()) ? 'email' : 'phone';
 
     function applyMethod(m) {
       method = m;
@@ -12741,7 +12754,7 @@ window.PF_CONFIG = {
       }
     }
 
-    applyMethod('phone');
+    applyMethod(method);
 
     D.on(root, 'click', '.auth-tab', function (e, el) {
       applyMethod(el.getAttribute('data-method'));

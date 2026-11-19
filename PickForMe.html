@@ -5646,19 +5646,9 @@ table.cmp thead th:first-child { background: var(--surface-2); }
 </script>
 <script>
 /* assets/js/config.js */
-/* ============================================================
-   部署配置
-   ------------------------------------------------------------
-   留空 = 纯本地模式：数据只存这台浏览器，单文件版就是这样。
-   填了下面两个值 = 云端模式：投票同步到 Supabase，别人打开链接也能看到、能投。
-
-   anon / publishable key 本来就是公开的（会出现在前端代码里），
-   权限由数据库的 RLS 策略与 GRANT 控制。不要放 service_role key。
-   ============================================================ */
-window.PF_CONFIG = {
-  supabaseUrl: 'https://oyriyvmzgeiposntzbxe.supabase.co',
-  supabaseAnonKey: 'sb_publishable_r1o0GHcDESJiWLwg05_k8A__QDbuqyt'
-};
+/* 单文件版：离线运行，不连云端，数据只在本机 */
+window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
+(function (root) { root.PFSync = root.PFSync || {}; })(window);
 
 </script>
 <script>
@@ -5713,13 +5703,19 @@ window.PF_CONFIG = {
   }
 
   function write(collection, list) {
+    var prev = [];
+    try { prev = read(collection); } catch (e) { prev = []; }
     try {
       localStorage.setItem(NS + collection, JSON.stringify(list));
-      return true;
     } catch (e) {
       console.warn('[store] 写入失败（可能是容量满或被禁用）', e);
       return false;
     }
+    /* 有云端配置时顺带同步；失败不影响本地写入本身 */
+    if (window.PFSync && typeof window.PFSync.onWrite === 'function') {
+      try { window.PFSync.onWrite(collection, list, prev); } catch (e) { /* 忽略 */ }
+    }
+    return true;
   }
 
   function uid(prefix) {
@@ -6071,10 +6067,6 @@ window.PF_CONFIG = {
 
       write(collection, list);
 
-      /* 有云端配置时顺带推一份；失败不影响本地 */
-      if (window.PFSync && typeof window.PFSync.onSave === 'function') {
-        try { window.PFSync.onSave(collection, item); } catch (e) { /* 忽略 */ }
-      }
       return item;
     },
 
@@ -8124,10 +8116,12 @@ window.PF_CONFIG = {
 /* ============================================================
    Supabase 同步层
    ------------------------------------------------------------
-   只做一件事：把「投票元数据」和「每一票」搬到云端，
-   让不同设备看到同一场投票。
+   把「投票 + 每一票」以及「攻略、交换单、交换申请、收藏、消息、用户档案」
+   搬到云端，让不同设备看到同一份数据。
 
-   判断逻辑（计票、门槛、平票、信用）不在这里，仍在四个技能里。
+   判定逻辑（计票、门槛、平票、信用、攻略起草、交换匹配）不在这里，
+   仍在四个技能里；这里只搬运。
+
    配置为空、或网络不可达时，整个模块静默降级为纯本地，
    页面行为与没有它时完全一致。
    ============================================================ */
@@ -8141,22 +8135,32 @@ window.PF_CONFIG = {
 
   var state = { status: ON ? 'idle' : 'off', error: '', syncedAt: 0, pushed: 0, pulled: 0 };
 
-  /* 演示数据不上云：既有对象标记，也有 id 清单兜底 */
+  /* 除投票外的云端表；polls 与 votes 走各自的逻辑 */
+  var TABLES = ['guides', 'swaps', 'swapreqs', 'favs', 'messages', 'voters'];
+  var LIMIT = 500;
+
+  /* ---------- 演示数据识别 ----------
+     三重兜底：对象上的 seed 标记、_demo 形式的 id、以及启动时记下的 id 清单。
+     演示数据一律不上云，否则每个人第一次打开都会把种子推一遍。 */
   function seedIds() {
     try { return JSON.parse(localStorage.getItem('pf:seedids') || '[]'); } catch (e) { return []; }
   }
-  function isDemo(p) {
-    if (!p || !p.id) return true;
-    if (p.seed) return true;
-    return seedIds().indexOf(p.id) >= 0;
+  function isDemo(obj) {
+    if (!obj || !obj.id) return true;
+    if (obj.seed) return true;
+    if (/^[a-z]+_demo\d*$/.test(obj.id)) return true;
+    return seedIds().indexOf(obj.id) >= 0;
   }
-  /* 云端记的 id 用登录账号的 uuid；没登录时退回本地 id，方便以后开严格权限 */
+  /* 用户档案只认云端账号派生的 id（u_ + 12 位十六进制），
+     这样 u_me / u6 / g_dead1 这些演示投票人不会被推上去 */
+  function realVoter(id) { return /^u_[0-9a-f]{12}$/.test(String(id || '')); }
+
+  /* 云端记的 id 用登录账号的 uuid；没登录时退回本地 id */
   function whoami(localId) {
     var u = root.PFAuth && root.PFAuth.user ? root.PFAuth.user() : null;
     return (u && u.id) ? u.id : (localId || '');
   }
 
-  /* 空壳不传：没标题或没候选的，传上去只会污染列表 */
   function realPoll(p) {
     return !!(p && p.title && p.options && p.options.length);
   }
@@ -8191,6 +8195,13 @@ window.PF_CONFIG = {
     });
   }
 
+  function fail(e) {
+    state.error = e && e.message ? e.message : String(e);
+    state.status = 'error';
+  }
+
+  /* ---------- 投票 ---------- */
+
   function pushPoll(poll) {
     if (!ON || locked) return;
     if (isDemo(poll) || !realPoll(poll)) return;
@@ -8204,10 +8215,7 @@ window.PF_CONFIG = {
       }
     }).then(function () {
       state.pushed += 1;
-    }).catch(function (e) {
-      state.error = e.message;
-      state.status = 'error';
-    });
+    }).catch(fail);
   }
 
   function pushVote(pollId, vote) {
@@ -8218,13 +8226,66 @@ window.PF_CONFIG = {
       body: { id: vote.id, poll_id: pollId, voter_id: whoami(vote.voterId), payload: vote }
     }).then(function () {
       state.pushed += 1;
-    }).catch(function (e) {
-      state.error = e.message;
-      state.status = 'error';
+    }).catch(fail);
+  }
+
+  /* ---------- 通用表 ---------- */
+
+  function pushRow(table, item) {
+    if (!ON || locked || !item || !item.id || isDemo(item)) return;
+    if (table === 'voters' && !realVoter(item.id)) return;
+    api(table, {
+      method: 'POST',
+      prefer: 'resolution=merge-duplicates',
+      body: {
+        id: item.id, payload: item,
+        author_id: whoami(item.authorId || item.ownerId || item.by || item.id),
+        updated_at: new Date().toISOString()
+      }
+    }).then(function () {
+      state.pushed += 1;
+    }).catch(fail);
+  }
+
+  function deleteRow(table, id) {
+    if (!ON || locked || !id) return;
+    api(table + '?id=eq.' + encodeURIComponent(id), { method: 'DELETE', prefer: 'return=minimal' })
+      .catch(fail);
+  }
+
+  /* ---------- 写入钩子：一次覆盖所有 Store.save / write 路径 ---------- */
+
+  function onWrite(collection, next, prev) {
+    if (!ON || locked) return;
+    var table = (collection === 'polls' || collection === 'history') ? 'polls' : collection;
+    if (table === 'votes') return;                        /* votes 跟着 poll 走 */
+    if (table !== 'polls' && TABLES.indexOf(table) < 0) return;
+
+    var before = {};
+    (prev || []).forEach(function (x) { if (x && x.id) before[x.id] = JSON.stringify(x); });
+
+    var after = {};
+    (next || []).forEach(function (item) {
+      if (!item || !item.id) return;
+      after[item.id] = true;
+      if (before[item.id] === JSON.stringify(item)) return;   /* 没变就不推 */
+      if (table === 'polls') {
+        pushPoll(item);
+        (item.votes || []).forEach(function (v) { pushVote(item.id, v); });
+      } else {
+        pushRow(table, item);
+      }
+    });
+
+    /* 本轮消失的就是删掉了 */
+    (prev || []).forEach(function (item) {
+      if (item && item.id && !after[item.id]) deleteRow(table, item.id);
     });
   }
 
-  /** 云端拉到的东西并进本地；本地独有的（离线时投的）补传上去 */
+  /* ---------- 合并 ---------- */
+
+  /** 云端投票并进本地；本地独有的（离线时投的）补传上去 */
   function merge(rows, voteRows) {
     var byPoll = {};
     (voteRows || []).forEach(function (v) {
@@ -8237,14 +8298,13 @@ window.PF_CONFIG = {
     (rows || []).forEach(function (r) {
       var poll = r && r.payload;
       if (!poll || !poll.id) return;
-      if (isDemo(poll) || !realPoll(poll)) return;   /* 云端残留的演示数据，不进界面也不回传 */
+      if (isDemo(poll) || !realPoll(poll)) return;
       var merged = (byPoll[poll.id] || []).slice();
       var local = Store.getAnyPoll(poll.id);
       if (local && local.votes) {
         local.votes.forEach(function (v) {
-          var dup = false;
-          for (var i = 0; i < merged.length; i++) { if (merged[i].id === v.id) { dup = true; break; } }
-          if (!dup) merged.push(v);
+          for (var i = 0; i < merged.length; i++) { if (merged[i].id === v.id) return; }
+          merged.push(v);
         });
       }
       poll.votes = merged;
@@ -8261,7 +8321,6 @@ window.PF_CONFIG = {
     });
     locked = false;
 
-    // 本地有、云端没有、且不是种子的：推上去
     var all = Store.list('polls').concat(Store.list('history') || []);
     all.forEach(function (p) {
       if (!p || isDemo(p) || seen[p.id] || !realPoll(p)) return;
@@ -8269,37 +8328,86 @@ window.PF_CONFIG = {
       (p.votes || []).forEach(function (v) { pushVote(p.id, v); });
     });
 
-    state.pulled = incoming.length;
+    return incoming.length;
   }
+
+  function mergeTable(table, rows) {
+    if (!rows || !rows.length) return 0;
+    var got = 0;
+    locked = true;
+    rows.forEach(function (r) {
+      var item = r && r.payload;
+      if (!item || !item.id || isDemo(item)) return;
+      if (table === 'voters' && !realVoter(item.id)) return;
+      item.remote = true;
+      Store.save(table, item);
+      got += 1;
+    });
+    locked = false;
+    return got;
+  }
+
+  /* 拉完之后，把本地有、云端没有的补传 */
+  function pushLocalMissing(table) {
+    var remote = {};
+    return api(table + '?select=id&limit=' + LIMIT).then(function (rows) {
+      (rows || []).forEach(function (r) { if (r && r.id) remote[r.id] = true; });
+      Store.list(table).forEach(function (item) {
+        if (!item || !item.id || isDemo(item)) return;
+        if (table === 'voters' && !realVoter(item.id)) return;
+        if (remote[item.id]) return;
+        pushRow(table, item);
+      });
+    });
+  }
+
+  /* ---------- 启动 ---------- */
 
   function boot(done) {
     done = done || function () {};
     if (!ON) { state.status = 'off'; done(state); return; }
     state.status = 'syncing';
-    var polls = [], votes = [];
-    api('polls?select=id,payload,updated_at&limit=200')
-      .then(function (r) { polls = r || []; return api('votes?select=id,poll_id,payload&limit=2000'); })
-      .then(function (r) { votes = r || []; })
-      .then(function () {
-        merge(polls, votes);
-        state.status = 'on';
-        state.syncedAt = Date.now();
-        state.error = '';
-        done(state);
-      })
-      .catch(function (e) {
-        state.status = 'error';
-        state.error = e.message;
-        done(state);
+
+    var chain = api('polls?select=id,payload&limit=' + LIMIT)
+      .then(function (r) { return api('votes?select=id,poll_id,payload&limit=2000').then(function (v) { return [r || [], v || []]; }); })
+      .then(function (pair) {
+        state.pulled += merge(pair[0], pair[1]);
       });
+
+    TABLES.forEach(function (t) {
+      chain = chain.then(function () {
+        return api(t + '?select=id,payload&limit=' + LIMIT)
+          .then(function (r) { state.pulled += mergeTable(t, r); })
+          .then(function () { return pushLocalMissing(t); })
+          .catch(function (e) {
+            /* 某张表还没建、或不给权限：只记下来，不影响其他表与本地功能 */
+            if (!state.missing) state.missing = [];
+            state.missing.push(t);
+            state.error = e && e.message ? e.message : String(e);
+          });
+      });
+    });
+
+    chain.then(function () {
+      state.status = 'on';
+      state.syncedAt = Date.now();
+      state.error = '';
+      done(state);
+    }).catch(function (e) {
+      fail(e);
+      done(state);
+    });
   }
 
+  /* 兼容旧调用点 */
   function onSave(coll, item) {
-    if (!ON || locked || isDemo(item)) return;
+    if (!ON || locked) return;
     if (coll === 'polls' || coll === 'history') {
       pushPoll(item);
       (item.votes || []).forEach(function (v) { pushVote(item.id, v); });
+      return;
     }
+    if (TABLES.indexOf(coll) >= 0) pushRow(coll, item);
   }
 
   root.PFSync = {
@@ -8307,6 +8415,9 @@ window.PF_CONFIG = {
     status: function () { return state; },
     boot: boot,
     onSave: onSave,
+    onWrite: onWrite,
+    tables: TABLES.slice(),
+
     /* 本地没有这条投票时，去云端取一次；取不到就回 null */
     fetchPoll: function (pollId, done) {
       done = done || function () {};
@@ -8332,6 +8443,15 @@ window.PF_CONFIG = {
       api('votes?select=id,poll_id,payload&poll_id=eq.' + encodeURIComponent(pollId))
         .then(function (rows) { done && done(rows || []); })
         .catch(function () { done && done(null); });
+    },
+
+    /* 按集合名手动刷新一次（列表页用） */
+    pullTable: function (table, done) {
+      done = done || function () {};
+      if (!ON || TABLES.indexOf(table) < 0) { done(0); return; }
+      api(table + '?select=id,payload&limit=' + LIMIT)
+        .then(function (r) { done(mergeTable(table, r)); })
+        .catch(function () { done(0); });
     }
   };
 })(window);

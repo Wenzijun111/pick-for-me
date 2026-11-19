@@ -12785,11 +12785,15 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         PFAuth.signIn(contact, secret).then(function (u) { done(u, false); }).catch(function (err) {
           var msg = String((err && err.message) || '');
           if (err && err.status === 400) {
-            /* 账号还没注册过：先注册 */
+            /* 400 既可能是「没注册」，也可能是「密码错」——先试着注册来区分 */
             PFAuth.signUp(contact, secret).then(function (u) {
               if (!u) { unlock(); D.toast('注册成功，请到邮箱点确认链接后再登录'); return; }
               done(u, true);
-            }).catch(fail);
+            }).catch(function (e2) {
+              unlock();
+              if (e2 && e2.status === 422) { D.toast('这个邮箱已经注册过了，密码可能不对'); return; }
+              D.toast('登录失败：' + ((e2 && e2.message) || e2));
+            });
           } else {
             fail(err);
           }

@@ -5645,6 +5645,23 @@ table.cmp thead th:first-child { background: var(--surface-2); }
 
 </script>
 <script>
+/* assets/js/config.js */
+/* ============================================================
+   部署配置
+   ------------------------------------------------------------
+   留空 = 纯本地模式：数据只存这台浏览器，单文件版就是这样。
+   填了下面两个值 = 云端模式：投票同步到 Supabase，别人打开链接也能看到、能投。
+
+   anon / publishable key 本来就是公开的（会出现在前端代码里），
+   权限由数据库的 RLS 策略与 GRANT 控制。不要放 service_role key。
+   ============================================================ */
+window.PF_CONFIG = {
+  supabaseUrl: 'https://oyriyvmzgeiposntzbxe.supabase.co',
+  supabaseAnonKey: 'sb_publishable_r1o0GHcDESJiWLwg05_k8A__QDbuqyt'
+};
+
+</script>
+<script>
 /* assets/js/store.js */
 /* ============================================================
    store.js — 数据层（演示用）
@@ -6053,6 +6070,11 @@ table.cmp thead th:first-child { background: var(--surface-2); }
       else list.unshift(item);
 
       write(collection, list);
+
+      /* 有云端配置时顺带推一份；失败不影响本地 */
+      if (window.PFSync && typeof window.PFSync.onSave === 'function') {
+        try { window.PFSync.onSave(collection, item); } catch (e) { /* 忽略 */ }
+      }
       return item;
     },
 
@@ -6262,6 +6284,47 @@ table.cmp thead th:first-child { background: var(--surface-2); }
     },
 
     /**
+     * 云端账号登录成功后，把远端用户落到本地 voters 上。
+     * 本地 id 由远端 uuid 派生，保证换设备登录同一账号时身份不变、票能对上。
+     */
+    adoptAccount: function (p) {
+      var remoteId = String((p && p.remoteId) || '');
+      if (!remoteId) return null;
+      var vid = 'u_' + remoteId.replace(/-/g, '').slice(0, 12);
+      var list = read('voters');
+      var hit = null;
+      var i;
+      for (i = 0; i < list.length; i++) {
+        if (list[i].id === vid) { hit = list[i]; break; }
+      }
+      if (!hit) {
+        hit = {
+          id: vid,
+          name: String(p.name || '新用户').slice(0, 20),
+          contact: String(p.email || ''),
+          createdAt: new Date().toISOString(),
+          isMe: false
+        };
+        list.push(hit);
+        write('voters', list);
+      } else if (p.name && hit.name !== p.name) {
+        hit.name = String(p.name).slice(0, 20);
+        write('voters', list);
+      }
+      var acc = {
+        id: 'a_' + vid,
+        contact: String(p.email || ''),
+        method: 'email',
+        voterId: vid,
+        name: hit.name,
+        createdAt: new Date().toISOString(),
+        remoteId: remoteId
+      };
+      try { localStorage.setItem(NS + 'account', JSON.stringify(acc)); } catch (e) { /* 隐私模式 */ }
+      return acc;
+    },
+
+    /**
      * 把联系方式绑到一个投票人上。
      * 演示手机号 → 预置的「我」；其它联系方式 → 新建一个没有历史票的投票人。
      */
@@ -6299,6 +6362,10 @@ table.cmp thead th:first-child { background: var(--surface-2); }
     },
 
     logout: function () {
+      /* 配了云端账号时，两边一起退：云端会话 + 本地账号 */
+      if (window.PFAuth && window.PFAuth.enabled()) {
+        try { window.PFAuth.signOut(); } catch (e) { /* 忽略 */ }
+      }
       try { localStorage.removeItem(NS + 'account'); } catch (e) { /* 忽略 */ }
       return true;
     },
@@ -7372,6 +7439,7 @@ table.cmp thead th:first-child { background: var(--surface-2); }
           createdAt: new Date(now - (32 - i * 3) * day).toISOString()
         };
       });
+      history.forEach(function (p) { p.seed = 1; });
       write('history', history);
 
       /* ---- 演示投票 1：家庭消费决策 ---- */
@@ -7970,7 +8038,9 @@ table.cmp thead th:first-child { background: var(--surface-2); }
         createdAt: new Date(now - 3 * day).toISOString()
       };
 
-      write('polls', [poll1, poll2, poll3, poll4, poll5, poll6, poll7, poll8]);
+      var seededPolls = [poll1, poll2, poll3, poll4, poll5, poll6, poll7, poll8];
+      seededPolls.forEach(function (p) { p.seed = 1; });
+      write('polls', seededPolls);
       write('guides', [guide1, guide2, guide3]);
       write('swaps', [swap1, swap2, swap3]);
       write('swapreqs', [
@@ -8022,6 +8092,14 @@ table.cmp thead th:first-child { background: var(--surface-2); }
       ]);
 
       write('favs', []);
+
+      /* 记下这批演示数据的 id：同步层据此排除，不上传到云端 */
+      try {
+        var seedIds = read('polls').map(function (p) { return p.id; })
+          .concat(read('history').map(function (p) { return p.id; }));
+        localStorage.setItem('pf:seedids', JSON.stringify(seedIds));
+      } catch (e) { /* 隐私模式 */ }
+
       localStorage.setItem(SEED_FLAG, SEED_VER);
       return true;
     },
@@ -8038,6 +8116,324 @@ table.cmp thead th:first-child { background: var(--surface-2); }
 
   global.Store = Store;
 
+})(window);
+
+</script>
+<script>
+/* assets/js/sync.js */
+/* ============================================================
+   Supabase 同步层
+   ------------------------------------------------------------
+   只做一件事：把「投票元数据」和「每一票」搬到云端，
+   让不同设备看到同一场投票。
+
+   判断逻辑（计票、门槛、平票、信用）不在这里，仍在四个技能里。
+   配置为空、或网络不可达时，整个模块静默降级为纯本地，
+   页面行为与没有它时完全一致。
+   ============================================================ */
+(function (root) {
+  'use strict';
+
+  var cfg = root.PF_CONFIG || {};
+  var BASE = String(cfg.supabaseUrl || '').replace(/\/+$/, '');
+  var KEY = String(cfg.supabaseAnonKey || '');
+  var ON = !!(BASE && KEY);
+
+  var state = { status: ON ? 'idle' : 'off', error: '', syncedAt: 0, pushed: 0, pulled: 0 };
+
+  /* 演示数据不上云：既有对象标记，也有 id 清单兜底 */
+  function seedIds() {
+    try { return JSON.parse(localStorage.getItem('pf:seedids') || '[]'); } catch (e) { return []; }
+  }
+  function isDemo(p) {
+    if (!p || !p.id) return true;
+    if (p.seed) return true;
+    return seedIds().indexOf(p.id) >= 0;
+  }
+  /* 云端记的 id 用登录账号的 uuid；没登录时退回本地 id，方便以后开严格权限 */
+  function whoami(localId) {
+    var u = root.PFAuth && root.PFAuth.user ? root.PFAuth.user() : null;
+    return (u && u.id) ? u.id : (localId || '');
+  }
+
+  /* 空壳不传：没标题或没候选的，传上去只会污染列表 */
+  function realPoll(p) {
+    return !!(p && p.title && p.options && p.options.length);
+  }
+  var locked = false;
+
+  function headers(prefer) {
+    var h = {
+      apikey: KEY,
+      Authorization: 'Bearer ' + KEY,
+      'Content-Type': 'application/json'
+    };
+    if (prefer) h.Prefer = prefer;
+    return h;
+  }
+
+  function api(path, opt) {
+    opt = opt || {};
+    var init = {
+      method: opt.method || 'GET',
+      headers: headers(opt.prefer),
+      cache: 'no-store'
+    };
+    if (opt.body) init.body = JSON.stringify(opt.body);
+    return fetch(BASE + '/rest/v1/' + path, init).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          throw new Error('HTTP ' + r.status + ' ' + String(t).slice(0, 160));
+        });
+      }
+      if (r.status === 204) return null;
+      return r.json();
+    });
+  }
+
+  function pushPoll(poll) {
+    if (!ON || locked) return;
+    if (isDemo(poll) || !realPoll(poll)) return;
+    api('polls', {
+      method: 'POST',
+      prefer: 'resolution=merge-duplicates',
+      body: {
+        id: poll.id, payload: poll,
+        author_id: whoami(poll.authorId),
+        updated_at: new Date().toISOString()
+      }
+    }).then(function () {
+      state.pushed += 1;
+    }).catch(function (e) {
+      state.error = e.message;
+      state.status = 'error';
+    });
+  }
+
+  function pushVote(pollId, vote) {
+    if (!ON || locked || !pollId || !vote || !vote.id) return;
+    api('votes', {
+      method: 'POST',
+      prefer: 'resolution=ignore-duplicates',
+      body: { id: vote.id, poll_id: pollId, voter_id: whoami(vote.voterId), payload: vote }
+    }).then(function () {
+      state.pushed += 1;
+    }).catch(function (e) {
+      state.error = e.message;
+      state.status = 'error';
+    });
+  }
+
+  /** 云端拉到的东西并进本地；本地独有的（离线时投的）补传上去 */
+  function merge(rows, voteRows) {
+    var byPoll = {};
+    (voteRows || []).forEach(function (v) {
+      if (!v || !v.poll_id || !v.payload) return;
+      (byPoll[v.poll_id] || (byPoll[v.poll_id] = [])).push(v.payload);
+    });
+
+    var seen = {};
+    var incoming = [];
+    (rows || []).forEach(function (r) {
+      var poll = r && r.payload;
+      if (!poll || !poll.id) return;
+      if (isDemo(poll) || !realPoll(poll)) return;   /* 云端残留的演示数据，不进界面也不回传 */
+      var merged = (byPoll[poll.id] || []).slice();
+      var local = Store.getAnyPoll(poll.id);
+      if (local && local.votes) {
+        local.votes.forEach(function (v) {
+          var dup = false;
+          for (var i = 0; i < merged.length; i++) { if (merged[i].id === v.id) { dup = true; break; } }
+          if (!dup) merged.push(v);
+        });
+      }
+      poll.votes = merged;
+      poll.remote = true;
+      seen[poll.id] = true;
+      incoming.push(poll);
+    });
+
+    locked = true;
+    incoming.forEach(function (poll) {
+      var existing = Store.getAnyPoll(poll.id);
+      var bucket = (existing && existing.archived) || poll.archived ? 'history' : 'polls';
+      Store.save(bucket, poll);
+    });
+    locked = false;
+
+    // 本地有、云端没有、且不是种子的：推上去
+    var all = Store.list('polls').concat(Store.list('history') || []);
+    all.forEach(function (p) {
+      if (!p || isDemo(p) || seen[p.id] || !realPoll(p)) return;
+      pushPoll(p);
+      (p.votes || []).forEach(function (v) { pushVote(p.id, v); });
+    });
+
+    state.pulled = incoming.length;
+  }
+
+  function boot(done) {
+    done = done || function () {};
+    if (!ON) { state.status = 'off'; done(state); return; }
+    state.status = 'syncing';
+    var polls = [], votes = [];
+    api('polls?select=id,payload,updated_at&limit=200')
+      .then(function (r) { polls = r || []; return api('votes?select=id,poll_id,payload&limit=2000'); })
+      .then(function (r) { votes = r || []; })
+      .then(function () {
+        merge(polls, votes);
+        state.status = 'on';
+        state.syncedAt = Date.now();
+        state.error = '';
+        done(state);
+      })
+      .catch(function (e) {
+        state.status = 'error';
+        state.error = e.message;
+        done(state);
+      });
+  }
+
+  function onSave(coll, item) {
+    if (!ON || locked || isDemo(item)) return;
+    if (coll === 'polls' || coll === 'history') {
+      pushPoll(item);
+      (item.votes || []).forEach(function (v) { pushVote(item.id, v); });
+    }
+  }
+
+  root.PFSync = {
+    enabled: function () { return ON; },
+    status: function () { return state; },
+    boot: boot,
+    onSave: onSave,
+    /* 本地没有这条投票时，去云端取一次；取不到就回 null */
+    fetchPoll: function (pollId, done) {
+      done = done || function () {};
+      if (!ON || !pollId) { done(null); return; }
+      var q = 'polls?select=id,payload&id=eq.' + encodeURIComponent(pollId);
+      api(q).then(function (rows) {
+        var poll = rows && rows[0] && rows[0].payload;
+        if (!poll) { done(null); return; }
+        var vq = 'votes?select=id,poll_id,payload&poll_id=eq.' + encodeURIComponent(pollId);
+        return api(vq).then(function (vs) {
+          var list = [];
+          (vs || []).forEach(function (v) { if (v && v.payload) list.push(v.payload); });
+          poll.votes = list;
+          poll.remote = true;
+          done(poll);
+        });
+      }).catch(function () { done(null); });
+    },
+
+    /* 手动刷新单场（详情页用） */
+    refresh: function (pollId, done) {
+      if (!ON) { done && done(null); return; }
+      api('votes?select=id,poll_id,payload&poll_id=eq.' + encodeURIComponent(pollId))
+        .then(function (rows) { done && done(rows || []); })
+        .catch(function () { done && done(null); });
+    }
+  };
+})(window);
+
+</script>
+<script>
+/* assets/js/auth.js */
+/* ============================================================
+   账号层（Supabase Auth）
+   ------------------------------------------------------------
+   邮箱 + 密码，注册和登录都由 Supabase 处理，这里只负责调用与保存会话。
+   配置为空时整个模块不启用，页面继续用原有的本机演示登录。
+
+   会话存在 localStorage 的 pf:session 里，刷新后仍然有效。
+   ============================================================ */
+(function (root) {
+  'use strict';
+
+  var cfg = root.PF_CONFIG || {};
+  var BASE = String(cfg.supabaseUrl || '').replace(/\/+$/, '');
+  var KEY = String(cfg.supabaseAnonKey || '');
+  var ON = !!(BASE && KEY);
+  var SKEY = 'pf:session';
+
+  function session() {
+    try { return JSON.parse(localStorage.getItem(SKEY) || 'null'); } catch (e) { return null; }
+  }
+  function put(s) {
+    try {
+      if (s) localStorage.setItem(SKEY, JSON.stringify(s));
+      else localStorage.removeItem(SKEY);
+    } catch (e) { /* 隐私模式 */ }
+  }
+
+  function call(path, opt) {
+    opt = opt || {};
+    var h = { apikey: KEY, 'Content-Type': 'application/json' };
+    if (opt.token) h.Authorization = 'Bearer ' + opt.token;
+    var init = { method: opt.method || 'POST', headers: h, cache: 'no-store' };
+    if (opt.body) init.body = JSON.stringify(opt.body);
+    return fetch(BASE + '/auth/v1/' + path, init).then(function (r) {
+      return r.text().then(function (t) {
+        var d = null;
+        try { d = t ? JSON.parse(t) : null; } catch (e) { d = null; }
+        if (!r.ok) {
+          var msg = (d && (d.msg || d.error_description || d.error || d.message)) || ('HTTP ' + r.status);
+          var err = new Error(msg);
+          err.status = r.status;
+          throw err;
+        }
+        return d;
+      });
+    });
+  }
+
+  /* Supabase 的 signup / token 返回结构有两种形状，统一取出来 */
+  function pick(d) {
+    if (!d) return null;
+    if (d.access_token && d.user) return d;
+    if (d.session && d.session.access_token && d.session.user) return d.session;
+    return null;
+  }
+
+  function adopt(d) {
+    var s = pick(d);
+    if (!s) return null;
+    put({ token: s.access_token, refresh: s.refresh_token || '', user: s.user, at: Date.now() });
+    return s.user;
+  }
+
+  root.PFAuth = {
+    enabled: function () { return ON; },
+    user: function () { var s = session(); return s ? s.user : null; },
+    token: function () { var s = session(); return s ? s.token : null; },
+
+    /* 注册。没开邮箱确认时直接返回会话；开了则返回 null（要先去收邮件） */
+    signUp: function (email, password) {
+      if (!ON) return Promise.reject(new Error('未配置云端账号'));
+      return call('signup', { body: { email: email, password: password } }).then(function (d) {
+        var u = adopt(d);
+        return u || null;
+      });
+    },
+
+    signIn: function (email, password) {
+      if (!ON) return Promise.reject(new Error('未配置云端账号'));
+      return call('token?grant_type=password', { body: { email: email, password: password } })
+        .then(function (d) {
+          var u = adopt(d);
+          if (!u) throw new Error('登录没有返回会话');
+          return u;
+        });
+    },
+
+    signOut: function () {
+      var s = session();
+      put(null);
+      if (ON && s && s.token) {
+        call('logout', { token: s.token }).catch(function () { /* 本地已清，忽略 */ });
+      }
+    }
+  };
 })(window);
 
 </script>
@@ -9719,11 +10115,23 @@ table.cmp thead th:first-child { background: var(--surface-2); }
     /* 先查进行中的，再查已归档的：旧链接指向结束的投票时，要看到"已结束"而不是 404 */
     var poll = Store.getAnyPoll(id);
     if (!poll) {
+      /* 可能是别人发来的链接：本地没有，去云端取一次，取到就重绘 */
+      if (window.PFSync && window.PFSync.enabled()) {
+        var settled = false;
+        PFSync.fetchPoll(id, function (remote) {
+          if (settled || !remote || !remote.id) return;
+          settled = true;
+          if (location.hash !== '#/poll/' + id) return;
+          Store.save(remote.archived ? 'history' : 'polls', remote);
+          window.dispatchEvent(new Event('hashchange'));
+        });
+        setTimeout(function () { settled = true; }, 4000);
+      }
       return statePage({
         tone: 'muted', code: '404', icon: '?',
         title: '这个投票不存在了',
-        text: '可能是发起者删掉了它，也可能链接被截断、少了几位。已经结束的投票仍然能打开，' +
-          '看到 404 说明这条链接指向的内容真的没有了。',
+        text: '可能是链接被截断、少了几位；也可能这条投票只存在发起者的浏览器里，' +
+          '没有同步到云端，那样别的设备就找不到它。已经结束的投票仍然能打开。',
         detail: '<div class="state-kv"><span>你打开的投票 id</span><code>' + esc(id || '（空）') + '</code></div>',
         actions: [
           { label: '回到首页看还在的投票', href: '#/', primary: true },
@@ -12225,11 +12633,55 @@ table.cmp thead th:first-child { background: var(--surface-2); }
 
     D.$('#loginForm', root).addEventListener('submit', function (e) {
       e.preventDefault();
+      var contact = String(D.$('#lgContact', root).value || '').trim();
+      var secret = D.$('#lgSecret', root).value;
+      var name = D.$('#lgName', root).value;
+
+      /* 配了 Supabase：走真实账号，邮箱 + 密码 */
+      if (window.PFAuth && window.PFAuth.enabled()) {
+        if (method !== 'email') { D.toast('云端账号请切到「邮箱」登录'); return; }
+        if (contact.indexOf('@') < 1) { D.toast('邮箱格式不对'); return; }
+        if (String(secret).length < 6) { D.toast('密码至少 6 位'); return; }
+
+        var btn = D.$('#loginForm button[type="submit"]', root);
+        var label = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+        var unlock = function () { if (btn) { btn.disabled = false; btn.textContent = label; } };
+        var done = function (user, isNew) {
+          Store.adoptAccount({
+            remoteId: user.id,
+            email: contact,
+            name: name || contact.split('@')[0]
+          });
+          var next = loginNext();
+          D.toast(isNew ? '账号已创建，欢迎' : '已登录');
+          location.hash = next || '#/me';
+        };
+        var fail = function (err) {
+          unlock();
+          D.toast('登录失败：' + ((err && err.message) || err));
+        };
+
+        PFAuth.signIn(contact, secret).then(function (u) { done(u, false); }).catch(function (err) {
+          var msg = String((err && err.message) || '');
+          if (err && err.status === 400) {
+            /* 账号还没注册过：先注册 */
+            PFAuth.signUp(contact, secret).then(function (u) {
+              if (!u) { unlock(); D.toast('注册成功，请到邮箱点确认链接后再登录'); return; }
+              done(u, true);
+            }).catch(fail);
+          } else {
+            fail(err);
+          }
+        });
+        return;
+      }
+
       var res = Store.signIn({
         method: method,
-        contact: D.$('#lgContact', root).value,
-        secret: D.$('#lgSecret', root).value,
-        name: D.$('#lgName', root).value
+        contact: contact,
+        secret: secret,
+        name: name
       });
       if (!res.ok) { D.toast(res.reason); return; }
 
@@ -13206,6 +13658,16 @@ table.cmp thead th:first-child { background: var(--surface-2); }
     render();
 
     if (seeded) D.toast('已载入演示数据，可以直接点开看看');
+
+    /* 填了 Supabase 配置才同步；拉完重绘一次，让云端投票出现在列表里 */
+    if (window.PFSync && window.PFSync.enabled()) {
+      window.PFSync.boot(function (st) {
+        if (st.status === 'on') {
+          render();
+          D.toast('已连上云端，拉到 ' + st.pulled + ' 场投票');
+        }
+      });
+    }
   }
 
   if (document.readyState === 'loading') {

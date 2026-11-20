@@ -8288,7 +8288,9 @@ window.PF_CONFIG = {
       method: 'POST',
       prefer: 'resolution=merge-duplicates',
       body: {
-        id: poll.id, payload: poll,
+        id: poll.id,
+        /* payload 里的票也要一人一条，否则脏数据会被一次次推回云端 */
+        payload: Object.assign({}, poll, { votes: dedupeVotes(poll.votes) }),
         author_id: whoami(poll.authorId),
         updated_at: new Date().toISOString()
       }
@@ -8302,18 +8304,32 @@ window.PF_CONFIG = {
     return job;
   }
 
+  /* 云端一行 = 一场投票里的一个人。
+     以前拿 vote.id 当行 id，而每次改投都会生成新的 vote.id，
+     于是同一个人在云端累积出两行，拉回来票数就翻倍。 */
+  function voteRowId(pollId, voterId) {
+    return 'v_' + String(pollId) + '_' + String(voterId);
+  }
+
   function pushVote(pollId, vote) {
-    if (!ON || locked || !pollId || !vote || !vote.id) return;
+    if (!ON || locked || !pollId || !vote || !vote.voterId) return;
     /* 种子里的假投票人（u_me / u6 / u_bad / g_dead*）的票不上云，
        否则会出现「3 票」但点开看不到是谁投的假数据 */
-    if (/^(u_me|u6|u_bad|g_dead\d+)$/.test(String(vote.voterId || ''))) return;
-    api('votes', {
-      method: 'POST',
-      prefer: 'resolution=ignore-duplicates',
-      body: { id: vote.id, poll_id: pollId, voter_id: whoami(vote.voterId), payload: vote }
-    }).then(function () {
-      state.pushed += 1;
-    }).catch(fail);
+    if (/^(u_me|u6|u_bad|g_dead\d+)$/.test(String(vote.voterId))) return;
+    var rid = voteRowId(pollId, vote.voterId);
+    var row = { id: rid, poll_id: pollId, voter_id: whoami(vote.voterId), payload: vote };
+    /* votes 表对匿名只开了 SELECT / INSERT / DELETE，没有 UPDATE，
+       所以 upsert 会 401。先删这一行再插，效果等于「改投覆盖」，
+       而且行 id 按人固定，同一个人永远只占一行。 */
+    return api('votes?id=eq.' + encodeURIComponent(rid), { method: 'DELETE', prefer: 'return=minimal' })
+      .catch(function () { return null; })
+      .then(function () {
+        return api('votes', { method: 'POST', prefer: 'resolution=ignore-duplicates', body: row });
+      })
+      .then(function () {
+        state.pushed += 1;
+      })
+      .catch(fail);
   }
 
   /* ---------- 通用表 ---------- */
@@ -8372,6 +8388,25 @@ window.PF_CONFIG = {
 
   /* ---------- 合并 ---------- */
 
+  /** 同一投票人只留最新一票（按 at 比较）。
+      既兜住历史脏数据（云端一人两行），也兜住本地被合并过的重复票。 */
+  function dedupeVotes(list) {
+    var out = [];
+    var pos = {};
+    (list || []).forEach(function (v) {
+      if (!v) return;
+      /* 一个人 + 一轮 = 一条；多轮投票的历史轮次各自保留 */
+      var key = (v.voterId || v.id) + '#' + (v.round || 0);
+      if (!key) { out.push(v); return; }
+      if (pos[key] === undefined) { pos[key] = out.length; out.push(v); return; }
+      var old = out[pos[key]];
+      var a = Date.parse(old.at || '') || 0;
+      var b = Date.parse(v.at || '') || 0;
+      if (b >= a) out[pos[key]] = v;
+    });
+    return out;
+  }
+
   /** 云端投票并进本地；本地独有的（离线时投的）补传上去 */
   function merge(rows, voteRows) {
     var byPoll = {};
@@ -8394,7 +8429,7 @@ window.PF_CONFIG = {
           merged.push(v);
         });
       }
-      poll.votes = merged;
+      poll.votes = dedupeVotes(merged);
       poll.remote = true;
       seen[poll.id] = true;
       incoming.push(poll);
@@ -8524,7 +8559,7 @@ window.PF_CONFIG = {
         return api(vq).then(function (vs) {
           var list = [];
           (vs || []).forEach(function (v) { if (v && v.payload) list.push(v.payload); });
-          poll.votes = list;
+          poll.votes = dedupeVotes(list);
           poll.remote = true;
           done(poll);
         });

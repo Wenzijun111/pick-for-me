@@ -5735,6 +5735,10 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
   /* ---------- 基础读写 ---------- */
 
+  /* 写演示数据期间静音同步：seed 会整表重写若干集合，
+     若照常触发 onWrite 的「本轮消失的就是删掉了」，云端真实数据会被误删。 */
+  var syncMuted = false;
+
   function read(collection) {
     try {
       var raw = localStorage.getItem(NS + collection);
@@ -5757,10 +5761,25 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       return false;
     }
     /* 有云端配置时顺带同步；失败不影响本地写入本身 */
-    if (window.PFSync && typeof window.PFSync.onWrite === 'function') {
+    if (!syncMuted && window.PFSync && typeof window.PFSync.onWrite === 'function') {
       try { window.PFSync.onWrite(collection, list, prev); } catch (e) { /* 忽略 */ }
     }
     return true;
+  }
+
+  /**
+   * 是不是「云端来的或用户自己建的」数据（相对演示数据而言）。
+   * seed 重写集合时要靠它保住真实内容，不能让演示数据把用户的投票冲掉。
+   */
+  function isUserData(x) {
+    if (!x || !x.id) return false;
+    if (x.remote) return true;
+    if (x.seed) return false;
+    return String(x.id).indexOf('demo') < 0;
+  }
+
+  function keepUser(list) {
+    return (list || []).filter(isUserData);
   }
 
   function uid(prefix) {
@@ -5917,7 +5936,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
   }
 
   var Store = {
-    VERSION: 'v0.1.8',
+    VERSION: 'v0.1.9',
     SEED_VER: SEED_VER,
 
     /* 分档与权重的展示口径，UI 与文档保持同一套说法 */
@@ -6128,6 +6147,24 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       for (var i = 0; i < list.length; i++) {
         if (list[i].id === item.id) { idx = i; break; }
       }
+
+      /* 结束是不可逆的：已经结束过的投票，不能被一张旧页面快照复活。
+         典型路径是参与者的详情页在结束前打开，点投票时用的仍是渲染时的旧对象，
+         整份 payload 写回来会把 archived=false 带回本地、再推回云端，
+         于是发起者结束了、参与者那边却永远显示「进行中」。
+         这里只认「结束」这一个方向，其余字段照旧原样保存。 */
+      if (collection === 'polls' || collection === 'history') {
+        var old = idx >= 0 ? list[idx] : null;
+        var done = collection === 'polls' ? Store.get('history', item.id) : null;
+        var wasArchived = (old && old.archived) || (done && done.archived);
+        if (wasArchived && !item.archived) {
+          var src = (old && old.archived) ? old : (done || {});
+          item.archived = true;
+          item.closedAt = src.closedAt || item.closedAt || new Date().toISOString();
+          item.closedBy = src.closedBy || item.closedBy || '';
+        }
+      }
+
       if (idx >= 0) list[idx] = item;
       else list.unshift(item);
 
@@ -7420,6 +7457,10 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     seed: function () {
       if (localStorage.getItem(SEED_FLAG) === SEED_VER) return false;
 
+      /* 演示数据全程不碰云端：seed 会整表重写 polls / history / messages 等集合。
+         若照常同步，onWrite 的「本轮消失的就是删掉了」会把真实投票从云端 DELETE 掉。 */
+      syncMuted = true;
+
       var now = Date.now();
       var day = 24 * 3600 * 1000;
       var h6 = 6 * 3600 * 1000;
@@ -7430,8 +7471,9 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
           return String(x.id).indexOf('demo') < 0;
         }));
       });
-      write('voters', []);
-      write('history', []);
+      /* 只清演示数据；云端拉下来的真实投票人 / 归档投票要留着 */
+      write('voters', keepUser(read('voters')));
+      write('history', keepUser(read('history')));
 
       /* ---- 投票人档案（演示数据，不是真实用户） ---- */
       var VOTERS = [
@@ -7467,7 +7509,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         });
       }
 
-      write('voters', VOTERS);
+      write('voters', VOTERS.concat(keepUser(read('voters'))));
 
       /* ---- 历史投票：用来积累信用样本 ----
          票型固定为 4:2:2，保证留一法剔除一人后仍能分出唯一优胜项。
@@ -8137,9 +8179,11 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
       var seededPolls = [poll1, poll2, poll3, poll4, poll5, poll6, poll7, poll8];
       seededPolls.forEach(function (p) { p.seed = 1; });
-      write('polls', seededPolls);
-      write('guides', [guide1, guide2, guide3]);
-      write('swaps', [swap1, swap2, swap3]);
+      /* 演示投票放前面，真实投票接在后面：
+         整表覆盖会把别人刚发起的投票从本地列表里冲掉，同步层还会当成删除。 */
+      write('polls', seededPolls.concat(keepUser(read('polls'))));
+      write('guides', [guide1, guide2, guide3].concat(keepUser(read('guides'))));
+      write('swaps', [swap1, swap2, swap3].concat(keepUser(read('swaps'))));
       write('swapreqs', [
         {
           id: 'r_demo1',
@@ -8154,7 +8198,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
           decidedAt: '',
           doneAt: ''
         }
-      ]);
+      ].concat(keepUser(read('swapreqs'))));
 
       /* ---- 站内消息（演示数据，收件人是演示账号「我」u_me） ---- */
       write('messages', [
@@ -8186,18 +8230,20 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
           href: '#/me',
           at: new Date(now - 3 * 24 * 3600 * 1000).toISOString(), read: true
         }
-      ]);
+      ].concat(keepUser(read('messages'))));
 
-      write('favs', []);
+      write('favs', keepUser(read('favs')));
 
-      /* 记下这批演示数据的 id：同步层据此排除，不上传到云端 */
+      /* 只记「这一批种下的」演示 id：同步层据此排除，不上传云端。
+         不能拿 read('polls') 全量来记，否则真实投票会被误标成演示数据。 */
       try {
-        var seedIds = read('polls').map(function (p) { return p.id; })
-          .concat(read('history').map(function (p) { return p.id; }));
+        var seedIds = seededPolls.map(function (p) { return p.id; })
+          .concat(history.map(function (p) { return p.id; }));
         localStorage.setItem('pf:seedids', JSON.stringify(seedIds));
       } catch (e) { /* 隐私模式 */ }
 
       localStorage.setItem(SEED_FLAG, SEED_VER);
+      syncMuted = false;
       return true;
     },
 
@@ -8218,7 +8264,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 </script>
 <script>
 /* assets/js/sync.js */
-/* ============================================================
+﻿/* ============================================================
    Supabase 同步层
    ------------------------------------------------------------
    把「投票 + 每一票」以及「攻略、交换单、交换申请、收藏、消息、用户档案」
@@ -8383,6 +8429,53 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     }).then(function () {
       state.pushed += 1;
     }).catch(fail);
+  }
+
+  /* ---------- 结束态：把本地那份搬进归档 ---------- */
+
+  /* 本地「进行中 → 已归档」只是一次集合搬家，不是删除。
+     可 Store.remove 会触发 onWrite 的「消失了就是删掉了」，把云端那行真删掉；
+     所以搬家这一段必须整体静音。 */
+  function withLock(fn) {
+    var was = locked;
+    locked = true;
+    try { return fn(); } finally { locked = was; }
+  }
+
+  /**
+   * 云端说这场已经结束了：把本地那份从 polls 搬进 history。
+   * 只改结束相关字段，票一律保留本地版本（可能还有一票没推上去）。
+   * @returns {boolean} 本地状态是否真的发生了变化
+   */
+  function archiveLocal(remote) {
+    var id = remote && remote.id;
+    if (!id) return false;
+    var local = Store.getAnyPoll(id);
+    if (!local) return false;
+
+    if (local.archived) {
+      /* 已经归档了；顺手清掉 polls 里可能残留的旧副本，并补齐关闭时间 */
+      var dirty = false;
+      if (!local.closedAt && remote.closedAt) { local.closedAt = remote.closedAt; dirty = true; }
+      if (!local.closedBy && remote.closedBy) { local.closedBy = remote.closedBy; dirty = true; }
+      if (Store.get('polls', id)) dirty = true;
+      if (dirty) {
+        withLock(function () {
+          if (Store.get('polls', id)) Store.remove('polls', id);
+          Store.save('history', local);
+        });
+      }
+      return false;
+    }
+
+    local.archived = true;
+    local.closedAt = remote.closedAt || local.closedAt || new Date().toISOString();
+    local.closedBy = remote.closedBy || local.closedBy;
+    withLock(function () {
+      Store.remove('polls', id);
+      Store.save('history', local);
+    });
+    return true;
   }
 
   /** 一场投票的所有票都删掉：开新一轮时用，否则上一轮的票会被拉回来 */
@@ -8603,6 +8696,21 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     clearVotes: clearVotes,
     tables: TABLES.slice(),
 
+    /* 把云端取回的投票放进本地该待的集合。
+       本地没有、需要新建一份时也走它，避免 Store.remove 把云端那行当成「删除」。
+       已结束的直接进 history，未结束的进 polls。 */
+    adopt: function (poll) {
+      if (!poll || !poll.id) return false;
+      var local = Store.getAnyPoll(poll.id);
+      if (local) return archiveLocal(poll);
+      withLock(function () {
+        Store.remove('polls', poll.id);
+        Store.remove('history', poll.id);
+        Store.save(poll.archived ? 'history' : 'polls', poll);
+      });
+      return true;
+    },
+
     /* 本地没有这条投票时，去云端取一次；取不到就回 null */
     fetchPoll: function (pollId, done) {
       done = done || function () {};
@@ -8623,29 +8731,40 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     },
 
     /* 详情页轮询：只关心「这场投票是不是被发起者结束了」。
+       进入时先查一次，之后每 5 秒一次；标签页重新可见时也补查一次。
        只同步结束态，不覆盖本地票，避免把还没推上去的一票冲掉。 */
     watchPoll: function (pollId, onChange, ms) {
       if (!ON || !pollId) return function () {};
-      var every = ms || 15000;
-      var timer = setInterval(function () {
-        if (document.hidden) return;
-        if (pendingPush[pollId]) return;
+      var every = Math.max(3000, ms || 5000);
+      var stopped = false;
+
+      function tick() {
+        if (stopped || document.hidden) return;
+        /* 注意：这里不因 pendingPush 跳过。
+           pendingPush 只说明本方还有一次投票在写，而 archiveLocal 只碰
+           archived / closedAt，不会覆盖票；卡住不查反而会让页面永远停在「进行中」。 */
         api('polls?select=id,payload&id=eq.' + encodeURIComponent(pollId))
           .then(function (rows) {
             var remote = rows && rows[0] && rows[0].payload;
             if (!remote || !remote.archived) return;
-            var local = Store.getAnyPoll(pollId);
-            if (!local || local.archived) return;
-            local.archived = true;
-            local.closedAt = remote.closedAt || new Date().toISOString();
-            local.closedBy = remote.closedBy || local.closedBy;
-            Store.remove('polls', pollId);
-            Store.save('history', local);
-            if (onChange) onChange('ended');
+            if (archiveLocal(remote) && onChange) onChange('ended');
           })
           .catch(function () {});
-      }, every);
-      return function () { clearInterval(timer); };
+      }
+
+      function onVisible() { if (!document.hidden) tick(); }
+
+      document.addEventListener('visibilitychange', onVisible);
+      window.addEventListener('focus', onVisible);
+      tick();                                  /* 进页面先查，不等第一个间隔 */
+      var timer = setInterval(tick, every);
+
+      return function () {
+        stopped = true;
+        clearInterval(timer);
+        document.removeEventListener('visibilitychange', onVisible);
+        window.removeEventListener('focus', onVisible);
+      };
     },
 
     /* 手动刷新单场（详情页用） */
@@ -8654,6 +8773,20 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       api('votes?select=id,poll_id,payload&poll_id=eq.' + encodeURIComponent(pollId))
         .then(function (rows) { done && done(rows || []); })
         .catch(function () { done && done(null); });
+    },
+
+    /* 重新拉一次投票与票（页面从后台回来时用）。
+       首页列表和详情页都会因为「别人已经结束了」而变化，
+       不能只在首次打开时 boot 一次。 */
+    refreshPolls: function (done) {
+      done = done || function () {};
+      if (!ON) { done(0); return; }
+      Promise.all([
+        api('polls?select=id,payload&limit=' + LIMIT).catch(function () { return []; }),
+        api('votes?select=id,poll_id,payload&limit=2000').catch(function () { return []; })
+      ]).then(function (pair) {
+        done(merge(pair[0], pair[1]));
+      }).catch(function () { done(0); });
     },
 
     /* 按集合名手动刷新一次（列表页用） */
@@ -10532,13 +10665,9 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
           PFSync.fetchPoll(id, function (remote) {
             if (remote && remote.id) {
               remoteLookup[id] = 'found';
-              if (remote.archived) {
-                Store.remove('polls', remote.id);
-                Store.save('history', remote);
-              } else {
-                Store.remove('history', remote.id);
-                Store.save('polls', remote);
-              }
+              /* 交给同步层搬：直接 Store.remove 会被 onWrite 当成「本地删掉了」，
+                 反过来把云端那行真删掉，后面的人打开就变 404 */
+              if (PFSync.adopt) PFSync.adopt(remote);
             } else {
               remoteLookup[id] = 'gone';
             }
@@ -10561,13 +10690,14 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       return renderPollGone(id);
     }
 
-    /* 别人结束了这场投票，本页要自己发现：每 15 秒问一次云端 */
+    /* 别人结束了这场投票，本页要自己发现：
+       进入页面先查一次，之后每 5 秒问一次云端（标签页重新可见时也补查）。 */
     if (!poll.archived && window.PFSync && window.PFSync.watchPoll) {
       pollWatchStop = PFSync.watchPoll(poll.id, function () {
         if (pollIdOfHash(location.hash) === poll.id) {
           window.dispatchEvent(new Event('hashchange'));
         }
-      }, 15000);
+      }, 5000);
     }
 
     var t = Store.tallyOf(poll);
@@ -11222,13 +11352,22 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       var meId = Store.meId();
       if (!meId) { askLogin('#/poll/' + poll.id); return; }
 
+      /* 写之前先取最新的一份：渲染之后发起者可能已经结束了这场投票。
+         拿旧快照整份保存会把 archived=false 写回本地，还会推回云端。 */
+      var cur = Store.getAnyPoll(poll.id) || poll;
+      if (Store.isClosed(cur)) {
+        D.toast('这次投票已经结束了，下面是结果');
+        rerender();
+        return;
+      }
+
       var me = getMe();
       /* 只基于当前轮的票重写，上一轮的残留不会跟着写回去 */
-      var votes = Store.roundVotes(poll).filter(function (v) { return v.voterId !== meId; });
-      var prev = myVoteOf(poll);
-      var round = poll.reopenRound || 0;
+      var votes = Store.roundVotes(cur).filter(function (v) { return v.voterId !== meId; });
+      var prev = myVoteOf(cur);
+      var round = cur.reopenRound || 0;
 
-      if (poll.type === 'multi' && prev && (prev.choice || []).indexOf(oid) >= 0) {
+      if (cur.type === 'multi' && prev && (prev.choice || []).indexOf(oid) >= 0) {
         var next = (prev.choice || []).filter(function (x) { return x !== oid; });
         if (next.length) {
           votes.push({
@@ -11236,7 +11375,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
             at: new Date().toISOString(), choice: next, round: round
           });
         }
-      } else if (poll.type === 'multi' && prev) {
+      } else if (cur.type === 'multi' && prev) {
         votes.push({
           id: Store.uid('v'), voterId: meId, by: me, at: new Date().toISOString(),
           choice: (prev.choice || []).concat([oid]), round: round
@@ -11248,16 +11387,16 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         });
       }
 
-      poll.votes = votes;
-      Store.save('polls', poll);
+      cur.votes = votes;
+      Store.save('polls', cur);
       lastVotedId = oid;
     }
 
     D.on(root, 'click', '[data-vote]', function (e, el) {
       var oid = el.getAttribute('data-vote');
 
-      /* 门槛判定放在点击时再跑一次，不依赖渲染时的快照 */
-      var gateRes = Store.canVote(poll, Store.meId());
+      /* 门槛与结束判定都放在点击时再跑一次，不依赖渲染时的快照 */
+      var gateRes = Store.canVote(Store.getAnyPoll(poll.id) || poll, Store.meId());
       if (!gateRes.ok) {
         if (gateRes.needLogin) { askLogin('#/poll/' + poll.id); return; }
         D.toast(gateRes.reason);
@@ -11344,8 +11483,14 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
       var meId = Store.meId();
       var me = getMe();
-      var now = Store.get('polls', poll.id);
-      if (!now) return;
+      var now = Store.getAnyPoll(poll.id);
+      if (!now) { D.toast('这次投票不存在了'); return; }
+      if (Store.isClosed(now)) {
+        pendingRevote = null;
+        D.toast('这次投票已经结束了，不能再重投');
+        rerender();
+        return;
+      }
       if (!meId) { askLogin('#/poll/' + poll.id); return; }
 
       var votes = (now.votes || []).filter(function (v) { return v.voterId !== meId; });
@@ -14112,6 +14257,8 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       close();
       paintChrome();
       if (location.hash !== href) location.hash = href;
+      /* 已经停在这条消息指向的页面时 hash 不会变，不手动重绘就看不到新状态 */
+      else render();
     });
 
     var all = document.getElementById('msgReadAll');
@@ -14173,6 +14320,23 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     window.addEventListener('pf:messages', paintChrome);
     bindChrome();
     render();
+
+    /* 页面从后台回到前台时补拉一次：别人刚结束的投票要立刻反映到列表与详情 */
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) return;
+      if (!window.PFSync || !window.PFSync.refreshPolls) return;
+      window.PFSync.refreshPolls(function (n) {
+        if (!n) return;
+        var route = parse(location.hash);
+        /* 详情页只在「刚发现已经结束」时重绘，别因为一次后台刷新把阅读位置弹回顶部 */
+        if (route.name === 'poll' && route.id) {
+          var p = Store.getAnyPoll(route.id);
+          if (p && p.archived) render();
+          return;
+        }
+        render();
+      });
+    });
 
     if (seeded) D.toast('已载入演示数据，可以直接点开看看');
 

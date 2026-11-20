@@ -13687,7 +13687,7 @@ window.PF_CONFIG = {
     } else {
       var noneReused = params.length && params.every(function (p) { return p.count <= 1; });
       body = (paramRow
-        ? '<div class="kb-params-title">参数字段（点击筛选）' +
+        ? '<div class="kb-params-title">选购要点（点击筛选）' +
           (noneReused ? '<span class="kb-hint">还没有字段在不同攻略里复用——多沉淀几篇会开始重叠</span>' : '') +
           '</div><div class="kb-param-row">' +
           (param ? '<button type="button" class="kb-param is-on" data-kb-param="">全部字段 ×</button>' : '') +
@@ -13702,7 +13702,7 @@ window.PF_CONFIG = {
     }
 
     return '' +
-      pageHead('知识库', all.length + ' 篇攻略 · ' + params.length + ' 个参数字段',
+      pageHead('知识库', all.length + ' 篇攻略 · ' + params.length + ' 个选购要点',
         '<button type="button" class="btn btn-line btn-sm" data-kb-export>导出 JSON</button>') +
       subTabs('kb') +
       '<div class="notice" style="margin-bottom:14px">' +

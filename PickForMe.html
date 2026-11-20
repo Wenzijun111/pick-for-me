@@ -9943,8 +9943,11 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
           '<a class="btn btn-primary" href="' + esc(loginLink(next)) + '">登录 / 注册</a>' +
           '<a class="btn btn-line" href="#/">先去逛逛</a>' +
         '</div>' +
-        '<p class="auth-gate-note">演示环境不发短信：手机号填 ' + esc(Store.DEMO_CONTACT) +
-          '，验证码填 123456，就能用带历史记录的演示账号。</p>' +
+        (cloudOn()
+          ? '<p class="auth-gate-note">用邮箱和密码登录，第一次用会自动注册，密码至少 6 位。' +
+            '换一台设备用同一个邮箱登录，看到的是同一份数据。</p>'
+          : '<p class="auth-gate-note">演示环境不发短信：手机号填 ' + esc(Store.DEMO_CONTACT) +
+            '，验证码填 123456，就能用带历史记录的演示账号。</p>') +
       '</div>';
   }
 
@@ -10314,6 +10317,8 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
   function bindNew(root, rerender) {
     var list = D.$('#optList', root);
+    /* 未登录时这一页渲染的是登录引导，没有候选列表；直接返回，不要往下取元素 */
+    if (!list) return;
     var count = 0;   // 当前行数，用于上限判断
     var seq = 0;     // 唯一序号，删除后不复用，避免 data-opt 撞车
 
@@ -12796,7 +12801,9 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         '<div class="account-main">' +
           '<div class="account-name">' + esc(acc.name || voter.name || '我') + '</div>' +
           '<div class="account-sub">' + esc(maskContact(acc)) + ' · ' +
-            esc(methodLabel(acc.method)) + ' · 演示账号</div>' +
+            esc(methodLabel(acc.method)) +
+            ((!cloudOn() || String(acc.contact || '') === String(Store.DEMO_CONTACT || ''))
+              ? ' · 演示账号' : '') + '</div>' +
           '<div class="account-stats">发起 ' + minePolls.length + ' 个投票 · 发布 ' +
             mySwaps.length + ' 条交换 · 收藏 ' + favList.length + ' 篇攻略 · 已登录</div>' +
         '</div>' +
@@ -12826,7 +12833,8 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
                   esc(a) + '</button>';
               }).join('') +
             '</div>' +
-            '<div class="desc">演示版用符号代替上传，头像只存在本机。</div>' +
+            '<div class="desc">用符号代替上传照片。' +
+              (cloudOn() ? '头像跟着账号走，换设备也在。' : '头像只存在本机。') + '</div>' +
           '</div>' +
 
           '<div class="field">' +
@@ -12846,10 +12854,11 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
     var dataBlock = '' +
       '<section class="section">' +
-        pageHead('数据备份', '导出一份，换台电脑也能接着演示') +
+        pageHead('数据备份', cloudOn() ? '导出一份留底' : '导出一份，换台电脑也能接着演示') +
         '<div class="card data-card">' +
-          '<p class="data-lead">这一版的数据存在这台电脑的浏览器里。' +
-            '导出一份 JSON 就能带走；导入会覆盖当前数据。' +
+          '<p class="data-lead">' + (cloudOn()
+            ? '数据已经在云端，换个设备登录就能同步；这里导出的是本地备份。导入会用文件里的内容覆盖当前数据。'
+            : '这一版的数据存在这台电脑的浏览器里。导出一份 JSON 就能带走；导入会覆盖当前数据。') +
             '文件里只有昵称、投票、交换和收藏，没有任何真实个人信息。</p>' +
           '<div class="data-actions">' +
             '<button type="button" class="btn btn-line btn-sm" data-export>导出数据</button>' +
@@ -13934,7 +13943,9 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       '<section class="doc-section">' +
         '<h3 class="doc-h">五、这一版怎么做的</h3>' +
         '<p class="doc-p">首届「滴普杯」DeepWorks 校园黑客松 · 赛道 C 自由开放参赛作品。' +
-          '前端是纯静态页面（无构建工具），数据与规则都写在页面里的 JS 中，' +
+          '前端是纯静态页面（无构建工具）。' + (cloudOn()
+            ? '判定规则写在页面 JS 与 DeepWorks 技能里；数据存放在第三方托管数据库（Supabase），只存数据、不参与判定；'
+            : '数据与规则都写在页面里的 JS 中；') +
           '方便评审直接打开源码核对每一条规则。</p>' +
         '<p class="doc-p">版本 <b>' + esc(Store.VERSION) + '</b>。' +
           '已知局限：' + (cloudOn()

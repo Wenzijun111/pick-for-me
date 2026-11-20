@@ -6113,7 +6113,12 @@ window.PF_CONFIG = {
      * 旧链接指向一场已经结束的投票时，要能打开"已结束"页，而不是 404。
      */
     getAnyPoll: function (id) {
-      return Store.get('polls', id) || Store.get('history', id);
+      var live = Store.get('polls', id);
+      var done = Store.get('history', id);
+      /* 两份都在（历史脏数据）时，以「已结束」那份为准：
+         结束是不可逆的，不能因为 polls 里还留着旧副本就显示成进行中 */
+      if (live && done && done.archived && !live.archived) return done;
+      return live || done;
     },
 
     save: function (collection, item) {
@@ -8478,8 +8483,20 @@ window.PF_CONFIG = {
     locked = true;
     incoming.forEach(function (poll) {
       var existing = Store.getAnyPoll(poll.id);
-      var bucket = (existing && existing.archived) || poll.archived ? 'history' : 'polls';
-      Store.save(bucket, poll);
+      /* 结束是不可逆的：本地已经结束过，就不能被云端一条旧的「未结束」快照复活 */
+      if (existing && existing.archived && !poll.archived) {
+        poll.archived = true;
+        poll.closedAt = existing.closedAt || poll.closedAt || new Date().toISOString();
+      }
+      /* 换集合时要把旧的那份删掉。只 save 不 remove 会留下两份，
+         而 getAnyPoll 先读 polls，于是页面一直拿旧的「未结束」版本。 */
+      if (poll.archived) {
+        Store.remove('polls', poll.id);
+        Store.save('history', poll);
+      } else {
+        Store.remove('history', poll.id);
+        Store.save('polls', poll);
+      }
     });
     locked = false;
 
@@ -8605,6 +8622,32 @@ window.PF_CONFIG = {
           done(poll);
         });
       }).catch(function () { done(null); });
+    },
+
+    /* 详情页轮询：只关心「这场投票是不是被发起者结束了」。
+       只同步结束态，不覆盖本地票，避免把还没推上去的一票冲掉。 */
+    watchPoll: function (pollId, onChange, ms) {
+      if (!ON || !pollId) return function () {};
+      var every = ms || 15000;
+      var timer = setInterval(function () {
+        if (document.hidden) return;
+        if (pendingPush[pollId]) return;
+        api('polls?select=id,payload&id=eq.' + encodeURIComponent(pollId))
+          .then(function (rows) {
+            var remote = rows && rows[0] && rows[0].payload;
+            if (!remote || !remote.archived) return;
+            var local = Store.getAnyPoll(pollId);
+            if (!local || local.archived) return;
+            local.archived = true;
+            local.closedAt = remote.closedAt || new Date().toISOString();
+            local.closedBy = remote.closedBy || local.closedBy;
+            Store.remove('polls', pollId);
+            Store.save('history', local);
+            if (onChange) onChange('ended');
+          })
+          .catch(function () {});
+      }, every);
+      return function () { clearInterval(timer); };
     },
 
     /* 手动刷新单场（详情页用） */
@@ -10474,7 +10517,12 @@ window.PF_CONFIG = {
     });
   }
 
+  var pollWatchStop = null;
+
   function renderPoll(id) {
+    /* 每次重绘都先停掉上一场的轮询，避免路由切换后还在拉旧投票 */
+    if (pollWatchStop) { pollWatchStop(); pollWatchStop = null; }
+
     /* 先查进行中的，再查已归档的：旧链接指向结束的投票时，要看到"已结束"而不是 404 */
     var poll = Store.getAnyPoll(id);
     if (!poll) {
@@ -10486,7 +10534,13 @@ window.PF_CONFIG = {
           PFSync.fetchPoll(id, function (remote) {
             if (remote && remote.id) {
               remoteLookup[id] = 'found';
-              Store.save(remote.archived ? 'history' : 'polls', remote);
+              if (remote.archived) {
+                Store.remove('polls', remote.id);
+                Store.save('history', remote);
+              } else {
+                Store.remove('history', remote.id);
+                Store.save('polls', remote);
+              }
             } else {
               remoteLookup[id] = 'gone';
             }
@@ -10507,6 +10561,15 @@ window.PF_CONFIG = {
         return renderPollLoading(id);
       }
       return renderPollGone(id);
+    }
+
+    /* 别人结束了这场投票，本页要自己发现：每 15 秒问一次云端 */
+    if (!poll.archived && window.PFSync && window.PFSync.watchPoll) {
+      pollWatchStop = PFSync.watchPoll(poll.id, function () {
+        if (pollIdOfHash(location.hash) === poll.id) {
+          window.dispatchEvent(new Event('hashchange'));
+        }
+      }, 15000);
     }
 
     var t = Store.tallyOf(poll);

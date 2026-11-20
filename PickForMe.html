@@ -8208,10 +8208,14 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
   /* ---------- 投票 ---------- */
 
+  /* 正在往云端写的投票：分享面板要据此提示"等一两秒再发" */
+  var pendingPush = {};
+
   function pushPoll(poll) {
     if (!ON || locked) return;
     if (isDemo(poll) || !realPoll(poll)) return;
-    api('polls', {
+    pendingPush[poll.id] = true;
+    var job = api('polls', {
       method: 'POST',
       prefer: 'resolution=merge-duplicates',
       body: {
@@ -8221,7 +8225,12 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       }
     }).then(function () {
       state.pushed += 1;
-    }).catch(fail);
+      delete pendingPush[poll.id];
+    }).catch(function (e) {
+      delete pendingPush[poll.id];
+      fail(e);
+    });
+    return job;
   }
 
   function pushVote(pollId, vote) {
@@ -8429,6 +8438,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     enabled: function () { return ON; },
     status: function () { return state; },
     boot: boot,
+    pending: function (id) { return !!pendingPush[id]; },
     onSave: onSave,
     onWrite: onWrite,
     tables: TABLES.slice(),
@@ -10936,7 +10946,9 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
             ? '链接里的投票编号就是这次私密投票的钥匙：猜不到，列表里也搜不到。'
             : '') +
           (cloudOn()
-            ? '这条投票已同步到云端，谁拿到链接、在别的设备上打开，看到的都是同一份。'
+            ? (window.PFSync.pending && PFSync.pending(poll.id)
+                ? '这条投票还在往云端同步，等一两秒再发；现在发出去别人可能打不开。'
+                : '这条投票已同步到云端，谁拿到链接、在别的设备上打开，看到的都是同一份。')
             : '离线版的数据存在本机浏览器里，换一台设备打开是空的；部署到线上之后，这条链接才是所有人共享的同一条投票。') +
         '</p>' +
       '</div>';
@@ -11195,6 +11207,18 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         // preventScroll：面板就在按钮下方，别把整页顶走
         try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
         input.select();
+      }
+      /* 刚建完的投票还在上传：同步完了把"等一等"换成"可以发了" */
+      if (cloudOn() && window.PFSync.pending && PFSync.pending(poll.id)) {
+        setTimeout(function () {
+          if (!host.innerHTML) return;
+          host.innerHTML = shareHtml(poll);
+          var again = D.$('#shareUrl', host);
+          if (again) {
+            try { again.focus({ preventScroll: true }); } catch (e) { again.focus(); }
+            again.select();
+          }
+        }, 1600);
       }
     }
 

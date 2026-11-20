@@ -6255,8 +6255,8 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         if (!/^\d{6}$/.test(secret)) {
           return { ok: false, reason: '验证码是 6 位数字（演示环境填 123456）', account: null, isNew: false };
         }
-      } else if (secret.length < 3) {
-        return { ok: false, reason: '密码至少 3 位', account: null, isNew: false };
+      } else if (secret.length < 6) {
+        return { ok: false, reason: '密码至少 6 位', account: null, isNew: false };
       }
 
       var isNew = true;
@@ -12867,14 +12867,14 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         contact.placeholder = 'you@example.com';
         contact.removeAttribute('inputmode');
         sl.textContent = '密码';
-        secret.placeholder = '至少 3 位';
+        secret.placeholder = '至少 6 位';
         if (send) send.hidden = true;
       } else {
         cl.textContent = '账号';
         contact.placeholder = '至少 3 个字符';
         contact.removeAttribute('inputmode');
         sl.textContent = '密码';
-        secret.placeholder = '至少 3 位';
+        secret.placeholder = '至少 6 位';
         if (send) send.hidden = true;
       }
     }

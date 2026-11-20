@@ -10090,13 +10090,16 @@ window.PF_CONFIG = {
   function pollCardHtml(p) {
     var t = Store.tally(p);
     var timing = Store.pollTiming(p);
+    /* 进行中不叫「已有结论」——1 票也能叫结论会误导。
+       进行中只说「暂时领先」，真正的结论留给结束态。
+       不把候选名塞进标签：名字一长就把「场景」标签挤到下一行，卡片变高变乱。 */
     var tag = Store.isClosed(p)
       ? '<span class="tag">' + (p.archived ? '已结束' : '已截止') + '</span>'
       : (t.total === 0
           ? '<span class="tag">还没人投</span>'
           : (t.tie
               ? '<span class="tag warn">平票</span>'
-              : '<span class="tag ok">已有结论</span>'));
+              : '<span class="tag ok">暂时领先</span>'));
     var deadlineTag = (!Store.isClosed(p) && timing.hasDeadline)
       ? '<span class="tag">' + esc(timing.short) + '后截止</span>'
       : '';
@@ -11183,7 +11186,11 @@ window.PF_CONFIG = {
 
     var voteHint = '点一个就是投票，可重复修改';
     if (closed) voteHint = '投票已结束，这里只作结果对照';
-    else if (!gateRes.ok) voteHint = '你暂时不能投，原因见上方';
+    else if (!gateRes.ok) {
+      voteHint = !Store.isLoggedIn()
+        ? '登录后才能投票，用上方的「登录 / 注册」'
+        : '当前不满足这次投票的门槛，条件见上方';
+    }
     else if (revoting) voteHint = '重新选一遍，确认后覆盖上一轮';
     else if (canRevote) voteHint = '候选更新过，你可以完整重投一次';
     else if (gate.key !== 'all') voteHint = '门槛：' + gate.label;
@@ -11203,11 +11210,11 @@ window.PF_CONFIG = {
       },
       {
         k: '候选增补', v: ruleAllow,
-        s: poll.allowAddOption ? '投过的人可完整重投' : '锁死，中途不能加'
+        s: poll.allowAddOption ? '增补后可改投一次，不算新一轮' : '锁死，中途不能加'
       },
       {
         k: '投票轮次', v: ruleRound,
-        s: poll.allowMultiRound ? '发起者可手动开下一轮' : '一次投完就定'
+        s: poll.allowMultiRound ? '发起者可手动开下一轮' : '一次投完就定，不会自动开新一轮'
       },
       {
         k: '截止', v: timing.label,

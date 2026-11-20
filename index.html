@@ -8681,7 +8681,25 @@ window.PF_CONFIG = {
     });
     locked = false;
     if (table === 'polls') pruneDeleted(rows);
+    else pruneTable(table, rows);
     return got;
+  }
+
+  /** 别的表同理：云端已经删掉的，本地缓存也清掉，别在页面上显示一条不存在的东西。 */
+  function pruneTable(table, rows) {
+    if (table === 'voters') return 0;
+    if (!rows || !rows.length) return 0;
+    var live = {};
+    rows.forEach(function (r) { if (r && r.id) live[r.id] = 1; });
+    var n = 0;
+    Store.list(table).forEach(function (item) {
+      if (!item || !item.id || !item.remote || live[item.id] || pendingPush[item.id]) return;
+      if (isDemo(item)) return;
+      addTomb(item.id);
+      Store.remove(table, item.id);
+      n += 1;
+    });
+    return n;
   }
 
   /* 拉完之后，把本地有、云端没有的补传 */
@@ -13688,9 +13706,9 @@ window.PF_CONFIG = {
         '<button type="button" class="btn btn-line btn-sm" data-kb-export>导出 JSON</button>') +
       subTabs('kb') +
       '<div class="notice" style="margin-bottom:14px">' +
-        '<div>这里索引的是<b>已有攻略</b>：每篇的四区块被拆成可检索的条目，' +
-        '参数字段带出现次数——同一个字段被不同投票用过几次，一眼能看出来。' +
-        '数据存放在' + dataWhere() + '，' + crossDevice() + '。</div>' +
+        '<div>这里收的都是<b>已经写好的攻略</b>，按预算、选购要点、适合谁、要避开的坑四部分拆开，可以按关键词找。' +
+        '要点后面的数字，是它被多少篇攻略用到过。' +
+        '攻略存在' + dataWhere() + '，' + crossDevice() + '。</div>' +
       '</div>' +
       '<div class="filter-bar">' +
         '<input type="search" class="input filter-search" id="kbSearch" data-kb-search' +

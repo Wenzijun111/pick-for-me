@@ -4030,6 +4030,10 @@ table.cmp .cmp-only {
 @media (max-width: 720px) {
   .result-chart.has-donut { grid-template-columns: 1fr; gap: 16px; }
   .donut { width: 108px; height: 108px; }
+  /* 窄屏把图例放到环形图下面、占满整行：候选名一行放得下，不会把「人均 480」挤到第二行 */
+  .donut-wrap { flex-direction: column; align-items: stretch; gap: 14px; }
+  .donut { align-self: center; }
+  .donut-legend { width: 100%; }
 }
 
 /* --- 结果页：投票记录摘要（匿名统计） --- */

@@ -863,6 +863,15 @@ table.cmp .cmp-val {
   color: var(--ink-2);
 }
 
+/* 只有一个候选填了的参数：差异信号，做轻一点，别抢「有」的位置 */
+table.cmp .cmp-only {
+  margin-left: 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  opacity: 0.9;
+}
+
 .cmp-legend {
   margin: 8px 2px 0;
   font-size: 12px;
@@ -10561,6 +10570,15 @@ window.PF_CONFIG = {
       });
     });
 
+    /* 每个参数有几个候选填了：0 的整列不要，1 的就是这个候选的独有优势 */
+    var filled = {};
+    keys.forEach(function (k) {
+      filled[k] = poll.options.filter(function (o) {
+        return (o.params || []).some(function (p) { return p.k === k; });
+      }).length;
+    });
+    keys = keys.filter(function (k) { return filled[k] > 0; });
+
     var cmp = '';
     if (keys.length) {
       var colLabel = poll.type === 'rank' ? '得分' : '票数';
@@ -10585,6 +10603,7 @@ window.PF_CONFIG = {
                 return '<td class="cmp-yes">' +
                   '<span class="cmp-mark">有</span>' +
                   (v && v !== k ? '<span class="cmp-val">' + esc(v) + '</span>' : '') +
+                  (filled[k] === 1 ? '<span class="cmp-only">独有</span>' : '') +
                 '</td>';
               }).join('') +
               '<td>' + esc(row ? row.score : 0) + '</td>' +
@@ -10592,7 +10611,8 @@ window.PF_CONFIG = {
           }).join('') +
           '</tbody></table>' +
         '</div>' +
-        '<p class="cmp-legend">「有」表示这个候选写了该参数，后面的小字是它填的值；横杠表示没有这一项。</p>';
+        '<p class="cmp-legend">「有」表示这个候选写了该参数，后面的小字是它填的值；' +
+          '「独有」表示只有这一个候选写了它；横杠表示没有这一项。</p>';
     }
 
     /* --- 权限提示：门槛只挡投票，不挡看结果 --- */

@@ -79,6 +79,7 @@
   --warn-ink: #96560a;
   --warn-soft: #fff6ea;
   --warn-line: #ffdfb8;
+  --danger: #d92d20;          /* 未读红点 / 危险操作 */
 
   --hero-from: #0b7ca4;
   --hero-to: #1a93bc;
@@ -2397,7 +2398,7 @@ table.cmp .cmp-only {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--danger);
+  background: var(--danger, #d92d20);
   box-shadow: 0 0 0 2px var(--surface);
 }
 
@@ -6538,6 +6539,12 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       };
       list.push(item);
       write('messages', list);
+      /* 同一页面里刚产生的消息要立刻点亮铃铛，不用等下一次重绘 */
+      try {
+        if (typeof window !== 'undefined' && window.dispatchEvent) {
+          window.dispatchEvent(new Event('pf:messages'));
+        }
+      } catch (e) { /* 非浏览器环境直接跳过 */ }
       return item;
     },
 
@@ -13999,6 +14006,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     }
 
     window.addEventListener('hashchange', render);
+    window.addEventListener('pf:messages', paintChrome);
     bindChrome();
     render();
 

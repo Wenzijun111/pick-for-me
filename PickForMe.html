@@ -8185,15 +8185,20 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       cache: 'no-store'
     };
     if (opt.body) init.body = JSON.stringify(opt.body);
-    return fetch(BASE + '/rest/v1/' + path, init).then(function (r) {
-      if (!r.ok) {
-        return r.text().then(function (t) {
-          throw new Error('HTTP ' + r.status + ' ' + String(t).slice(0, 160));
+        return fetch(BASE + '/rest/v1/' + path, init).then(function (r) {
+          if (!r.ok) {
+            return r.text().then(function (t) {
+              throw new Error('HTTP ' + r.status + ' ' + String(t).slice(0, 160));
+            });
+          }
+          if (r.status === 204) return null;
+          /* 空响应体不能直接 r.json()：会抛 "Unexpected end of JSON input"，
+             把整条启动链带崩。空就是空，当 null 处理。 */
+          return r.text().then(function (t) {
+            if (!t || !t.trim()) return null;
+            try { return JSON.parse(t); } catch (e) { return null; }
+          });
         });
-      }
-      if (r.status === 204) return null;
-      return r.json();
-    });
   }
 
   function fail(e) {
@@ -8371,36 +8376,42 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     done = done || function () {};
     if (!ON) { state.status = 'off'; done(state); return; }
     state.status = 'syncing';
+    state.pulled = 0;
+    state.missing = [];
 
-    var chain = api('polls?select=id,payload&limit=' + LIMIT)
-      .then(function (r) { return api('votes?select=id,poll_id,payload&limit=2000').then(function (v) { return [r || [], v || []]; }); })
-      .then(function (pair) {
-        state.pulled += merge(pair[0], pair[1]);
-      });
-
-    TABLES.forEach(function (t) {
-      chain = chain.then(function () {
-        return api(t + '?select=id,payload&limit=' + LIMIT)
-          .then(function (r) { state.pulled += mergeTable(t, r); })
-          .then(function () { return pushLocalMissing(t); })
-          .catch(function (e) {
-            /* 某张表还没建、或不给权限：只记下来，不影响其他表与本地功能 */
-            if (!state.missing) state.missing = [];
-            state.missing.push(t);
-            state.error = e && e.message ? e.message : String(e);
-          });
-      });
+    /* 投票与票并行拉。原来 8 张表串成一条链，第一次打开要等十几秒，
+       别人发来的链接在这期间会先看到 404。 */
+    var main = Promise.all([
+      api('polls?select=id,payload&limit=' + LIMIT).catch(function () { return []; }),
+      api('votes?select=id,poll_id,payload&limit=2000').catch(function () { return []; })
+    ]).then(function (pair) {
+      state.pulled += merge(pair[0], pair[1]);
     });
 
-    chain.then(function () {
-      state.status = 'on';
-      state.syncedAt = Date.now();
-      state.error = '';
-      done(state);
-    }).catch(function (e) {
-      fail(e);
-      done(state);
-    });
+    var tables = Promise.all(TABLES.map(function (t) {
+      return api(t + '?select=id,payload&limit=' + LIMIT)
+        .then(function (r) { state.pulled += mergeTable(t, r); })
+        .catch(function (e) {
+          /* 某张表没建或没权限只记下来，不影响别的表 */
+          state.missing.push(t);
+          if (!state.lastTableError) state.lastTableError = e && e.message ? e.message : String(e);
+        });
+    }));
+
+    Promise.all([main, tables])
+      .then(function () {
+        /* 补传本地有、云端没有的；并行，单表失败无所谓 */
+        return Promise.all(TABLES.map(function (t) {
+          return pushLocalMissing(t).catch(function () {});
+        }));
+      })
+      .catch(function () {})
+      .then(function () {
+        state.status = 'on';
+        state.syncedAt = Date.now();
+        state.error = state.missing.length ? ('部分表未就绪: ' + state.missing.join(', ')) : '';
+        done(state);
+      });
   }
 
   /* 兼容旧调用点 */
@@ -10248,36 +10259,79 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
      投票详情 + 结果
      ============================================================ */
 
+  /* 别人发来的链接：本地还没有时先问云端，问到之前不报 404。
+     只记 id → 状态，避免每次重绘都重复请求。 */
+  var remoteLookup = {};
+
+  /** 从 hash 里取投票 id，忽略 ? 之后的参数 */
+  function pollIdOfHash(hash) {
+    var h = (hash || '').replace(/^#\/?/, '');
+    var qi = h.indexOf('?');
+    if (qi >= 0) h = h.slice(0, qi);
+    var parts = h.split('/').filter(Boolean);
+    return parts[0] === 'poll' ? (parts[1] || '') : '';
+  }
+
+  function renderPollLoading(id) {
+    return statePage({
+      tone: 'muted', code: '', icon: '↻',
+      title: '正在从云端取这条投票',
+      text: '第一次打开别人发来的链接要先拉一下数据，通常一两秒；网络慢的话多等一会儿。',
+      detail: '<div class="state-kv"><span>投票编号</span><code>' + esc(id) + '</code></div>',
+      actions: [{ label: '回到首页', href: '#/', primary: true }]
+    });
+  }
+
+  function renderPollGone(id) {
+    return statePage({
+      tone: 'muted', code: '404', icon: '?',
+      title: '这个投票不存在了',
+      text: '可能是链接被截断、少了几位；也可能发起者把它删掉了。已经结束的投票仍然能打开。',
+      detail: '<div class="state-kv"><span>你打开的投票 id</span><code>' + esc(id || '（空）') + '</code></div>',
+      actions: [
+        { label: '回到首页看还在的投票', href: '#/', primary: true },
+        { label: '发起一个新的', href: '#/new' }
+      ],
+      links: [
+        { label: '选品攻略', href: '#/guides' },
+        { label: '信用规则说明', href: '#/rules' }
+      ]
+    });
+  }
+
   function renderPoll(id) {
     /* 先查进行中的，再查已归档的：旧链接指向结束的投票时，要看到"已结束"而不是 404 */
     var poll = Store.getAnyPoll(id);
     if (!poll) {
-      /* 可能是别人发来的链接：本地没有，去云端取一次，取到就重绘 */
       if (window.PFSync && window.PFSync.enabled()) {
-        var settled = false;
-        PFSync.fetchPoll(id, function (remote) {
-          if (settled || !remote || !remote.id) return;
-          settled = true;
-          if (location.hash !== '#/poll/' + id) return;
-          Store.save(remote.archived ? 'history' : 'polls', remote);
-          window.dispatchEvent(new Event('hashchange'));
-        });
-        setTimeout(function () { settled = true; }, 4000);
+        var st = remoteLookup[id];
+        if (st === 'gone') return renderPollGone(id);
+        if (!st) {
+          remoteLookup[id] = 'pending';
+          PFSync.fetchPoll(id, function (remote) {
+            if (remote && remote.id) {
+              remoteLookup[id] = 'found';
+              Store.save(remote.archived ? 'history' : 'polls', remote);
+            } else {
+              remoteLookup[id] = 'gone';
+            }
+            if (pollIdOfHash(location.hash) === id) {
+              window.dispatchEvent(new Event('hashchange'));
+            }
+          });
+          /* 网络太慢或离线：8 秒后不再转圈，按找不到处理 */
+          setTimeout(function () {
+            if (remoteLookup[id] === 'pending') {
+              remoteLookup[id] = 'gone';
+              if (pollIdOfHash(location.hash) === id) {
+                window.dispatchEvent(new Event('hashchange'));
+              }
+            }
+          }, 8000);
+        }
+        return renderPollLoading(id);
       }
-      return statePage({
-        tone: 'muted', code: '404', icon: '?',
-        title: '这个投票不存在了',
-        text: '可能是链接被截断、少了几位；也可能这条投票没有同步到云端，那样别的设备就找不到它。已经结束的投票仍然能打开。',
-        detail: '<div class="state-kv"><span>你打开的投票 id</span><code>' + esc(id || '（空）') + '</code></div>',
-        actions: [
-          { label: '回到首页看还在的投票', href: '#/', primary: true },
-          { label: '发起一个新的', href: '#/new' }
-        ],
-        links: [
-          { label: '选品攻略', href: '#/guides' },
-          { label: '信用规则说明', href: '#/rules' }
-        ]
-      });
+      return renderPollGone(id);
     }
 
     var t = Store.tallyOf(poll);

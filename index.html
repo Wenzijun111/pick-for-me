@@ -8386,6 +8386,7 @@ window.PF_CONFIG = {
   function pushPoll(poll) {
     if (!ON || locked) return;
     if (isDemo(poll) || !realPoll(poll)) return;
+    if (isTomb(poll.id)) return;             /* 删过的不要再推回去 */
     pendingPush[poll.id] = true;
     var job = api('polls', {
       method: 'POST',
@@ -8514,6 +8515,22 @@ window.PF_CONFIG = {
       .catch(fail);
   }
 
+  /* ---------- 删除墓碑 ----------
+     删掉的投票 id 要记下来。否则还持有本地缓存的设备下次同步时，
+     会把「云端已经删了」的这条当成新增重新推上去（实测发生过）。 */
+  var TOMB_KEY = 'pf:tomb';
+  function tombList() {
+    try { return JSON.parse(localStorage.getItem(TOMB_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function addTomb(id) {
+    if (!id) return;
+    var t = tombList();
+    if (t.indexOf(id) >= 0) return;
+    t.push(id);
+    try { localStorage.setItem(TOMB_KEY, JSON.stringify(t.slice(-300))); } catch (e) {}
+  }
+  function isTomb(id) { return !!id && tombList().indexOf(id) >= 0; }
+
   /* ---------- 写入钩子：一次覆盖所有 Store.save / write 路径 ---------- */
 
   function onWrite(collection, next, prev) {
@@ -8530,6 +8547,8 @@ window.PF_CONFIG = {
       if (!item || !item.id) return;
       after[item.id] = true;
       if (before[item.id] === JSON.stringify(item)) return;   /* 没变就不推 */
+      /* 这次是别的写操作顺带把它带出来的，不是它自己变了：删过就别推 */
+      if (table === 'polls' && isTomb(item.id)) return;
       if (table === 'polls') {
         pushPoll(item);
         (item.votes || []).forEach(function (v) { pushVote(item.id, v); });
@@ -8540,7 +8559,9 @@ window.PF_CONFIG = {
 
     /* 本轮消失的就是删掉了 */
     (prev || []).forEach(function (item) {
-      if (item && item.id && !after[item.id]) deleteRow(table, item.id);
+      if (!item || !item.id || after[item.id]) return;
+      addTomb(item.id);
+      deleteRow(table, item.id);
     });
   }
 
@@ -8578,6 +8599,7 @@ window.PF_CONFIG = {
       Store.list(bucket).forEach(function (p) {
         if (!p || !p.id || !p.remote || live[p.id] || pendingPush[p.id]) return;
         if (isDemo(p)) return;
+        addTomb(p.id);
         Store.remove(bucket, p.id);
         n += 1;
       });
@@ -8598,6 +8620,7 @@ window.PF_CONFIG = {
       var poll = r && r.payload;
       if (!poll || !poll.id) return;
       if (isDemo(poll) || !realPoll(poll)) return;
+      if (isTomb(poll.id)) return;           /* 本地标过删除：云端又出现也不收 */
       var merged = (byPoll[poll.id] || []).slice();
       var local = Store.getAnyPoll(poll.id);
       if (local && local.votes) {
@@ -8651,6 +8674,7 @@ window.PF_CONFIG = {
       var item = r && r.payload;
       if (!item || !item.id || isDemo(item)) return;
       if (table === 'voters' && !realVoter(item.id)) return;
+      if (table === 'polls' && isTomb(item.id)) return;
       item.remote = true;
       Store.save(table, item);
       got += 1;

@@ -835,6 +835,40 @@ table.cmp th:first-child {
 
 table.cmp thead th:first-child { background: var(--surface-2); }
 
+/* 表格里「有 / —」的对比：有值的一格给一点底色，空的一格缩到最小存在感 */
+table.cmp td.cmp-no {
+  color: var(--line-strong);
+  text-align: center;
+}
+
+table.cmp td.cmp-yes {
+  background: rgba(46, 204, 113, 0.10);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+table.cmp .cmp-mark {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--ok-ink);
+  background: var(--ok-soft);
+}
+
+table.cmp .cmp-val {
+  margin-left: 6px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.cmp-legend {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
 /* ============================================================
    十二、表单
    ============================================================ */
@@ -10544,13 +10578,21 @@ window.PF_CONFIG = {
               '<td>' + esc(price(o.price)) + '</td>' +
               keys.map(function (k) {
                 var hit = (o.params || []).filter(function (p) { return p.k === k; })[0];
-                return '<td>' + (hit ? esc(hit.v || '—') : '—') + '</td>';
+                if (!hit) return '<td class="cmp-no">—</td>';
+                var v = hit.v == null ? '' : String(hit.v).trim();
+                /* 写了这个参数就打「有」，顺带把具体值带上；
+                   值只是把参数名又抄了一遍的情况就不重复显示 */
+                return '<td class="cmp-yes">' +
+                  '<span class="cmp-mark">有</span>' +
+                  (v && v !== k ? '<span class="cmp-val">' + esc(v) + '</span>' : '') +
+                '</td>';
               }).join('') +
               '<td>' + esc(row ? row.score : 0) + '</td>' +
             '</tr>';
           }).join('') +
           '</tbody></table>' +
-        '</div>';
+        '</div>' +
+        '<p class="cmp-legend">「有」表示这个候选写了该参数，后面的小字是它填的值；横杠表示没有这一项。</p>';
     }
 
     /* --- 权限提示：门槛只挡投票，不挡看结果 --- */

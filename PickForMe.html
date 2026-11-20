@@ -6177,6 +6177,13 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
      * 走技能内核失败时静默回退本地逻辑，页面不会因为镜像缺失而白屏。
      */
     tallyOf: function (poll) {
+      /* 票先收口到「当前轮」：技能内核拿到的输入必须是已经清过旧轮的，
+         否则上一轮的票会被算进这一轮。 */
+      var curVotes = roundVotesOf(poll);
+      if (curVotes.length !== (poll.votes || []).length) {
+        poll = Object.assign({}, poll, { votes: curVotes });
+      }
+
       if (Store.computeSource() === 'skill') {
         var d = Store.decisionOf(poll);
         if (d) {

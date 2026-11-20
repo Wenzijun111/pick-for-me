@@ -4758,7 +4758,7 @@ table.cmp thead th:first-child { background: var(--surface-2); }
     </div>
     <div class="footer-col">
       <div class="footer-title">隐私提示</div>
-      <p>当前为参赛原型：账号与全部数据只存在本机浏览器，不上传服务器；页面中的投票人与票数为演示数据，不是真实用户。</p>
+      <p id="privacyNote">当前为参赛原型：数据仅存本机浏览器；页面中的投票人与票数为演示数据，不是真实用户。</p>
     </div>
     <div class="footer-col">
       <div class="footer-title">版权</div>
@@ -5658,19 +5658,20 @@ window.PF_CONFIG = {
 /* ============================================================
    store.js — 数据层（演示用）
    ============================================================
-   这里的 localStorage 是**演示数据源**，不是产品架构。
-   按 D20（2026-11-19 探测确认）的边界：
+   这里的 localStorage 是**本地缓存与离线数据源**，不是产品架构的全部。
+   按 D26（2026-11-19 修订，取代 D20 的「不引入任何 BaaS」）：
 
-     1. 数据层：localStorage 只负责"打开就能演示"，另配导出 / 导入 JSON。
-        数据可以带走、可以搬到另一台机器，但不声称"数据在平台内"。
-     2. 计算层：计票、留一法信用、门槛、到期与轮次判定，已收拢为
-        poll-result 技能（.opencode/skills/poll-result）。本文件里的同名函数
-        是原型期实现，前端接入后改为渲染技能返回的结果。
-     3. 不引入任何自建后端 / 数据库 / 容器。账号、票数都在这台机器上，
-        说明书里如实写"演示数据"。
+     1. 数据层：接入了第三方托管数据库（Supabase，只存数据、只做鉴权）。
+        localStorage 负责「打开就能演示」与离线兜底，另配导出 / 导入 JSON。
+        网络不可达时静默降级为纯本地，页面不会空白。
+     2. 计算层：计票、留一法信用、门槛、到期与轮次判定，写在
+        .opencode/skills/poll-result 等四个技能里，数据库里没有任何判定函数。
+        本文件里的同名函数是浏览器侧的同源实现，与技能共用同一套测试用例。
+     3. 不搭建自建服务器 / 不自己维护数据库。云端只负责存与鉴权，
+        说明书里如实写「数据存放在第三方托管服务」。
 
-   历史说明：本文件早先写着"必须替换为平台数据接口"这类表述，
-   那是 D20 之前的表述，与"不使用自建后端"自相矛盾，已按 D20 统一口径改掉。
+   历史说明：本文件早先写着「必须替换为平台数据接口」，后来按 D20 统一成
+   「不引入任何自建后端」；现在按 D26 再改一次——允许第三方托管，但仍不自建。
    ============================================================ */
 
 (function (global) {
@@ -9416,6 +9417,19 @@ window.PF_CONFIG = {
 
   var esc = D.esc, price = D.price, time = D.time, ago = D.ago;
 
+  /* 数据到底放在哪儿：接了云端就说云端，单文件离线版说本机。
+     全站涉及"数据在哪"的文案都走这里，避免一份代码两种说法打架。 */
+  function cloudOn() {
+    return !!(global.PFSync && global.PFSync.enabled && global.PFSync.enabled());
+  }
+  function dataWhere() { return cloudOn() ? '云端' : '本机浏览器'; }
+  /* 换设备还能不能看到 */
+  function crossDevice() {
+    return cloudOn()
+      ? '同一账号换设备登录，数据自动带过去'
+      : '换一台设备打开是空的';
+  }
+
   /* 最近一次投票的候选 id：只为了在重渲染后播一次弹跳动画 */
   var lastVotedId = null;
 
@@ -10255,8 +10269,7 @@ window.PF_CONFIG = {
       return statePage({
         tone: 'muted', code: '404', icon: '?',
         title: '这个投票不存在了',
-        text: '可能是链接被截断、少了几位；也可能这条投票只存在发起者的浏览器里，' +
-          '没有同步到云端，那样别的设备就找不到它。已经结束的投票仍然能打开。',
+        text: '可能是链接被截断、少了几位；也可能这条投票没有同步到云端，那样别的设备就找不到它。已经结束的投票仍然能打开。',
         detail: '<div class="state-kv"><span>你打开的投票 id</span><code>' + esc(id || '（空）') + '</code></div>',
         actions: [
           { label: '回到首页看还在的投票', href: '#/', primary: true },
@@ -10870,8 +10883,9 @@ window.PF_CONFIG = {
           (isLink
             ? '链接里的投票编号就是这次私密投票的钥匙：猜不到，列表里也搜不到。'
             : '') +
-          '演示版的数据存在本机浏览器里，换一台设备打开是空的；' +
-          '接上 DeepWorks 之后，这条链接才是所有人共享的同一条投票。' +
+          (cloudOn()
+            ? '这条投票已同步到云端，谁拿到链接、在别的设备上打开，看到的都是同一份。'
+            : '离线版的数据存在本机浏览器里，换一台设备打开是空的；部署到线上之后，这条链接才是所有人共享的同一条投票。') +
         '</p>' +
       '</div>';
   }
@@ -12480,8 +12494,8 @@ window.PF_CONFIG = {
         pageHead('数据说明') +
         '<div class="card">' +
           '<p style="margin:0;font-size:13.5px;color:var(--ink-2)">' +
-            '当前版本是前端原型：账号、投票、攻略、交换都存在这台设备的浏览器里，' +
-            '换一台设备看不到，清缓存会清空。' +
+            '账号、投票、攻略、交换都存放在<b>' + dataWhere() + '</b>；' +
+            crossDevice() + '。' +
             '页面上的投票人和票数是<b>演示数据</b>，不是真实用户。' +
           '</p>' +
         '</div>' +
@@ -12546,7 +12560,7 @@ window.PF_CONFIG = {
 
     D.on(root, 'click', '[data-logout]', function () {
       Store.logout();
-      D.toast('已退出登录，记录还留在这台设备上');
+      D.toast(cloudOn() ? '已退出登录，数据还在云端，登录后能拿回来' : '已退出登录，记录还留在这台设备上');
       location.hash = '#/';
     });
 
@@ -12589,7 +12603,9 @@ window.PF_CONFIG = {
 
     /* --- 数据备份：清空 --- */
     D.on(root, 'click', '[data-reset]', function () {
-      if (!window.confirm('会清空这台电脑上的账号、投票、交换与收藏，然后重新载入演示数据。确定？')) return;
+      if (!window.confirm(cloudOn()
+        ? '会清空这台设备上的本地副本（云端的数据不受影响，重新登录会拉回来），然后重新载入演示数据。确定？'
+        : '会清空这台电脑上的账号、投票、交换与收藏，然后重新载入演示数据。确定？')) return;
       var res = Store.resetData();
       if (!res.ok) { D.toast(res.error); return; }
       location.reload();
@@ -12942,7 +12958,7 @@ window.PF_CONFIG = {
       '<section class="doc-section">' +
         '<h3 class="doc-h">六、这一版的边界</h3>' +
         '<ul class="doc-ul">' +
-          '<li>数据存在你这台机器的浏览器里，换设备、清缓存都会重置；</li>' +
+          '<li>数据存在<b>' + dataWhere() + '</b>。' + crossDevice() + '；</li>' +
           '<li>没有平台侧校验，改本地数据就能改分数——这是原型阶段，不是上线形态；</li>' +
           '<li>分数只由投票行为算出来，交换完成情况与评价暂未计入。</li>' +
         '</ul>' +
@@ -13090,9 +13106,9 @@ window.PF_CONFIG = {
         '<button type="button" class="btn btn-line btn-sm" data-kb-export>导出 JSON</button>') +
       subTabs('kb') +
       '<div class="notice" style="margin-bottom:14px">' +
-        '<div>这里索引的是<b>本机已存的攻略</b>：每篇的四区块被拆成可检索的条目，' +
+        '<div>这里索引的是<b>已有攻略</b>：每篇的四区块被拆成可检索的条目，' +
         '参数字段带出现次数——同一个字段被不同投票用过几次，一眼能看出来。' +
-        '数据存在本机，不跨设备。</div>' +
+        '数据存放在' + dataWhere() + '，' + crossDevice() + '。</div>' +
       '</div>' +
       '<div class="filter-bar">' +
         '<input type="search" class="input filter-search" id="kbSearch" data-kb-search' +
@@ -13407,10 +13423,11 @@ window.PF_CONFIG = {
       '<section class="doc-section">' +
         '<h3 class="doc-h">四、隐私与数据</h3>' +
         '<ul class="doc-ul">' +
-          '<li>账号、投票、消息、收藏全部存在<b>本机浏览器（localStorage）</b>，不上传服务器；</li>' +
+          '<li>账号、投票、消息、收藏存放在<b>' + dataWhere() + '</b>；' + crossDevice() + '；</li>' +
           '<li>页面里的"妈 / 爸 / 二姨 / 同事小林"等是<b>演示数据</b>，不是真实用户；</li>' +
-          '<li>想清空全部数据：在浏览器里清除本站数据，或打开控制台执行 ' +
-            '<code>Store.reset()</code> 后刷新；</li>' +
+          '<li>想清空这台设备上的数据：在浏览器里清除本站数据，或打开控制台执行 ' +
+            '<code>Store.reset()</code> 后刷新' +
+            (cloudOn() ? '（云端数据不受影响，重新登录会拉回来）' : '') + '；</li>' +
           '<li>匿名投票不会展示投票人；实名投票只展示昵称与档位，不展示手机号。</li>' +
           '<li>「仅链接可见」的投票不会出现在首页列表，' +
             '<b>拿到链接就等于拿到访问权</b>——转发出去就等于把门打开了，发之前想清楚。</li>' +
@@ -13423,7 +13440,10 @@ window.PF_CONFIG = {
           '前端是纯静态页面（无构建工具），数据与规则都写在页面里的 JS 中，' +
           '方便评审直接打开源码核对每一条规则。</p>' +
         '<p class="doc-p">版本 <b>' + esc(Store.VERSION) + '</b>。' +
-          '已知局限：没有自建后端、没有上传通道，消息仅在本机投递，信用分不支持跨设备。</p>' +
+          '已知局限：' + (cloudOn()
+            ? '判定规则写在网页与 DeepWorks 技能里，数据存放在第三方托管数据库（Supabase），' +
+              '消息没有实时推送、刷新才拉取，信用分只由投票行为算出、交换完成情况暂未计入。'
+            : '单文件离线版没有上传通道，消息仅在本机投递，信用分不支持跨设备。') + '</p>' +
       '</section>' +
 
       '<div class="doc-actions">' +
@@ -13787,6 +13807,16 @@ window.PF_CONFIG = {
 
     var ver = document.getElementById('appVersion');
     if (ver) ver.textContent = Store.VERSION;
+
+    /* 页脚两处文案：接了云端就说云端，单文件离线版说本机。
+       同一份代码两种部署，不能写死一种说法。 */
+    var cloud = !!(window.PFSync && window.PFSync.enabled && window.PFSync.enabled());
+    var note = document.getElementById('storeNote');
+    if (note) note.textContent = cloud ? '数据存于云端 · 换设备登录可同步' : '数据仅存于本机浏览器';
+    var pn = document.getElementById('privacyNote');
+    if (pn) pn.textContent = cloud
+      ? '当前为参赛原型：数据存放在第三方托管数据库（Supabase），同一账号换设备能同步；页面中的投票人与票数为演示数据，不是真实用户。'
+      : '当前为参赛原型：数据仅存本机浏览器；页面中的投票人与票数为演示数据，不是真实用户。';
 
     var seeded = false;
     try {

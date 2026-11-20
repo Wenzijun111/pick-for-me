@@ -952,6 +952,29 @@ table.cmp .cmp-only {
   color: inherit;
 }
 
+/* 候选封面：有图片链接才出现，148px 统一高度，避免卡片高低不齐 */
+.vote-card .vote-thumb {
+  display: block;
+  width: 100%;
+  height: 148px;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.vote-card .vote-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+@media (max-width: 520px) {
+  .vote-card .vote-thumb { height: 120px; }
+}
+
 /* 候选序号徽章：替代 emoji，避免无彩色字体环境退化 */
 .opt-no {
   display: inline-grid;
@@ -5811,6 +5834,12 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     return (list || []).filter(isUserData);
   }
 
+  /* 图片链接只收 http(s)，空串表示没填。前后空格去掉，太长截断。 */
+  function imgUrl(v) {
+    var s = String(v == null ? '' : v).trim();
+    return /^https?:\/\//i.test(s) ? s.slice(0, 300) : '';
+  }
+
   function uid(prefix) {
     return (prefix || 'id') + '_' +
       Date.now().toString(36) + '_' +
@@ -7315,6 +7344,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         price: (priceVal === '' || priceVal == null || isNaN(Number(priceVal)))
           ? null : Number(priceVal),
         params: (input.params || []).filter(function (p) { return p && p.k; }),
+        img: imgUrl(input.img),
         reason: '',
         isNew: true,
         addedAt: new Date().toISOString(),
@@ -10406,6 +10436,10 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
                    'value="' + esc(p2) + '">' +
           '</div>' +
         '</div>' +
+        '<div class="field" style="margin:8px 0 0">' +
+          '<input class="input" name="optImg" maxlength="300" placeholder="图片链接（可选，https://…）" ' +
+                 'value="' + esc(d.img || '') + '">' +
+        '</div>' +
       '</div>';
   }
 
@@ -10634,9 +10668,13 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
       var rows = D.$$('[data-opt]', list);
       var options = [];
+      var badImg = 0;
       rows.forEach(function (row, i) {
         var name = D.$('[name="optName"]', row).value.trim();
         if (!name) return;
+        var imgEl = D.$('[name="optImg"]', row);
+        var imgRaw = imgEl ? imgEl.value.trim() : '';
+        if (imgRaw && !/^https?:\/\//i.test(imgRaw)) badImg = i + 1;
         var p1 = D.$('[name="optP1"]', row).value.trim();
         var p2 = D.$('[name="optP2"]', row).value.trim();
         var params = [];
@@ -10650,10 +10688,15 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
           price: pv === '' ? null : Number(pv),
           emoji: '',
           params: params,
+          img: imgRaw,
           reason: ''
         });
       });
 
+      if (badImg) {
+        D.toast('第 ' + badImg + ' 个候选的图片链接要以 http:// 或 https:// 开头');
+        return;
+      }
       if (options.length < 2) { D.toast('至少填 2 个候选名称'); return; }
 
       /* 截止时间：空 = 不限；填了就必须晚于现在 */
@@ -10844,9 +10887,16 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       if (o.isNew) badges += ' <span class="tag tag-new">新增选项</span>';
       if (picked) badges += ' <span class="tag brand">' + (revoting ? '已选' : '你选了') + '</span>';
 
+      /* 有图片链接就显示封面；图片打不开时整块收起，不留破图 */
+      var thumb = o.img
+        ? '<span class="vote-thumb"><img src="' + esc(o.img) + '" alt="" loading="lazy" ' +
+          'onerror="this.parentNode.style.display=\'none\'"></span>'
+        : '';
+
       return '' +
         '<button type="button" class="' + cls + '" data-vote="' + esc(o.id) + '"' +
                 ((!gateRes.ok || closed) ? ' aria-disabled="true"' : '') + '>' +
+          thumb +
           '<h3><span class="opt-no" aria-hidden="true">' + (i + 1) + '</span>' + esc(o.name) +
             badges + '</h3>' +
           '<p>' + esc(price(o.price)) + (o.reason ? ' · ' + esc(o.reason) : '') + '</p>' +
@@ -11159,6 +11209,11 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
                 '<label for="addP2">参数2（可空）</label>' +
                 '<input class="input" id="addP2" name="addP2" maxlength="16" placeholder="雨天 室内温泉">' +
               '</div>' +
+            '</div>' +
+            '<div class="field" style="margin-top:10px">' +
+              '<label for="addImg">图片链接（可空）</label>' +
+              '<input class="input" id="addImg" name="addImg" maxlength="300" ' +
+                     'placeholder="https://...">' +
             '</div>' +
             '<label class="risk-check">' +
               '<input type="checkbox" name="addRisk" value="1">' +
@@ -11668,11 +11723,19 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       if (p1El && p1El.value.trim()) params.push(splitParam(p1El.value.trim()));
       if (p2El && p2El.value.trim()) params.push(splitParam(p2El.value.trim()));
 
+      var imgEl = D.$('[name="addImg"]', form);
+      var imgRaw = imgEl ? imgEl.value.trim() : '';
+      if (imgRaw && !/^https?:\/\//i.test(imgRaw)) {
+        D.toast('图片链接要以 http:// 或 https:// 开头');
+        return;
+      }
+
       var priceEl = D.$('[name="addPrice"]', form);
       var r = Store.addOptionDuringPoll(now, {
         name: name,
         price: priceEl ? priceEl.value : '',
-        params: params
+        params: params,
+        img: imgRaw
       }, Store.meId());
 
       if (!r.ok) {

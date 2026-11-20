@@ -9550,7 +9550,12 @@ window.PF_CONFIG = {
 
   /** 当前这次投票的对外链接（hash 路由，file:// 下同样成立） */
   function pollUrl(id) {
-    return location.href.split('#')[0] + '#/poll/' + encodeURIComponent(id);
+    /* 线上只留 origin + 路径，别把调试参数（?v=…）带进分享链接；
+       file:// 打开时 origin 是 null，只能退回用当前路径 */
+    var base = location.protocol === 'file:'
+      ? location.href.split('#')[0]
+      : location.origin + location.pathname;
+    return base + '#/poll/' + encodeURIComponent(id);
   }
 
   /**

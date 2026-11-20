@@ -10577,6 +10577,10 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     });
     keys = keys.filter(function (k) { return filled[k] > 0; });
 
+    /* 每个参数都只有一款填的时候，「独有」等于没说，整表不标 */
+    var anyShared = keys.some(function (k) { return filled[k] > 1; });
+    var markOnly = anyShared && keys.some(function (k) { return filled[k] === 1; });
+
     var cmp = '';
     if (keys.length) {
       var colLabel = poll.type === 'rank' ? '得分' : '票数';
@@ -10601,7 +10605,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
                 return '<td class="cmp-yes">' +
                   '<span class="cmp-mark">有</span>' +
                   (v && v !== k ? '<span class="cmp-val">' + esc(v) + '</span>' : '') +
-                  (filled[k] === 1 ? '<span class="cmp-only">独有</span>' : '') +
+                  (markOnly && filled[k] === 1 ? '<span class="cmp-only">独有</span>' : '') +
                 '</td>';
               }).join('') +
               '<td>' + esc(row ? row.score : 0) + '</td>' +
@@ -10610,7 +10614,8 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
           '</tbody></table>' +
         '</div>' +
         '<p class="cmp-legend">「有」表示这个候选写了该参数，后面的小字是它填的值；' +
-          '「独有」表示只有这一个候选写了它；横杠表示没有这一项。</p>';
+          (markOnly ? '「独有」表示只有这一个候选写了它；' : '') +
+          '横杠表示没有这一项。</p>';
     }
 
     /* --- 权限提示：门槛只挡投票，不挡看结果 --- */

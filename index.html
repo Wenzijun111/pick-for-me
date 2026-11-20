@@ -9954,8 +9954,20 @@ window.PF_CONFIG = {
      首页
      ============================================================ */
 
+  /**
+   * 进行中 + 已归档的全量投票，按 id 去重，history 优先。
+   * 投票一结束就会被 watcher 从 polls 搬进 history，
+   * 只读 polls 会让「已经结束的投票」「我发起的投票」直接消失。
+   */
+  function allPolls() {
+    var map = {};
+    Store.list('polls').forEach(function (p) { if (p && p.id) map[p.id] = p; });
+    Store.list('history').forEach(function (p) { if (p && p.id) map[p.id] = p; });
+    return Object.keys(map).map(function (k) { return map[k]; });
+  }
+
   function renderHome() {
-    var all = Store.list('polls');
+    var all = allPolls();
     var meId = Store.meId();
     // 「仅链接可见」的投票不进公共列表，只能凭链接进入
     var open = all.filter(function (p) { return !Store.isClosed(p); });
@@ -12014,7 +12026,8 @@ window.PF_CONFIG = {
           '#/guide/new');
     }
 
-    var myPolls = Store.list('polls').filter(function (p) { return p.owner === Store.meId(); });
+    /* 攻略本来就该从已结束的投票里沉淀，所以这里必须带上 history */
+    var myPolls = allPolls().filter(function (p) { return p.owner === Store.meId(); });
 
     return '' +
       pageHead('投稿攻略', '四区块结构，不用写成散文') +
@@ -12704,7 +12717,7 @@ window.PF_CONFIG = {
     var avatar = voter.avatar || '🌿';
     var hideBadge = !!voter.hideBadge;
 
-    var minePolls = Store.list('polls').filter(function (p) { return p.owner === meId; });
+    var minePolls = allPolls().filter(function (p) { return p.owner === meId; });
     var favList = Store.favs().map(function (f) {
       return Store.get('guides', f.guideId);
     }).filter(Boolean);

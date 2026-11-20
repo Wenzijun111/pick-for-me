@@ -9554,28 +9554,43 @@ window.PF_CONFIG = {
   }
 
   /**
-   * 复制文本。https 下用 Clipboard API；file:// 或旧浏览器回退到
-   * 临时 textarea + execCommand，两套都失败时由调用方引导手动复制。
+   * 复制文本。https 下先试 Clipboard API，失败再回退到 execCommand；
+   * file:// 或旧浏览器直接走 execCommand。传了输入框就顺手选中，
+   * 万一两条路都被浏览器拦，用户抬手 Ctrl+C 也能拿到。
    */
-  function copyText(text) {
-    if (navigator.clipboard && window.isSecureContext) {
-      return navigator.clipboard.writeText(text);
+  function copyText(text, srcInput) {
+    if (srcInput) {
+      try {
+        srcInput.focus({ preventScroll: true });
+        srcInput.select();
+        srcInput.setSelectionRange(0, text.length);
+      } catch (e) { /* 选中失败不影响后面 */ }
     }
-    return new Promise(function (resolve, reject) {
-      var ta = document.createElement('textarea');
-      ta.value = text;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.top = '-2000px';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      ta.setSelectionRange(0, text.length);
-      var ok = false;
-      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-      ta.remove();
-      if (ok) resolve(); else reject(new Error('copy-failed'));
-    });
+
+    function viaTextarea() {
+      return new Promise(function (resolve, reject) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-2000px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        ta.remove();
+        if (ok) resolve(); else reject(new Error('copy-failed'));
+      });
+    }
+
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).catch(function () {
+        return viaTextarea();
+      });
+    }
+    return viaTextarea();
   }
 
   /** 单选/多选时 score 就是票数，只有排序制才是"分" */
@@ -11209,6 +11224,15 @@ window.PF_CONFIG = {
         // preventScroll：面板就在按钮下方，别把整页顶走
         try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
         input.select();
+        /* 点"分享链接"就等于复制：不用再找第二个按钮 */
+        var copyBtn = D.$('[data-copy]', host);
+        copyText(input.value, input).then(function () {
+          if (copyBtn) copyBtn.textContent = '已复制';
+          D.toast('链接已复制，去粘贴就行');
+        }).catch(function () {
+          if (copyBtn) copyBtn.textContent = '按 Ctrl+C';
+          D.toast('链接已选中，按 Ctrl+C 复制');
+        });
       }
       /* 刚建完的投票还在上传：同步完了把"等一等"换成"可以发了" */
       if (cloudOn() && window.PFSync.pending && PFSync.pending(poll.id)) {
@@ -11231,13 +11255,14 @@ window.PF_CONFIG = {
     D.on(root, 'click', '[data-copy]', function (e, btn) {
       var input = D.$('#shareUrl', root);
       if (!input) return;
-      copyText(input.value).then(function () {
+      copyText(input.value, input).then(function () {
         btn.textContent = '已复制';
         D.toast('链接已复制');
         setTimeout(function () { btn.textContent = '复制'; }, 1600);
       }).catch(function () {
         try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
         input.select();
+        btn.textContent = '按 Ctrl+C';
         D.toast('浏览器不允许自动复制，链接已选中，按 Ctrl+C');
       });
     });

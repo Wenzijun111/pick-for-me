@@ -1033,7 +1033,20 @@ table.cmp .cmp-only {
   gap: 12px;
 }
 
+/* 结果条同理：名字长就换行，数字固定在右侧 */
+.bar-top { flex-wrap: wrap; align-items: baseline; }
+
+.bar-top > span:first-child {
+  flex: 1 1 12ch;
+  min-width: 0;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
 .bar-num {
+  flex: 0 0 auto;
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
   font-family: var(--font-num);
@@ -3987,7 +4000,7 @@ table.cmp .cmp-only {
 
 .donut-legend li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
   font-size: 12.5px;
   color: var(--ink-2);
@@ -4001,12 +4014,15 @@ table.cmp .cmp-only {
   flex: 0 0 auto;
 }
 
+/* 候选名宁可换行也不截断：窄屏上「C · 市区剧本杀 + 聚餐，人均 480」会被切成「C · 市区剧本杀 + 聚…」 */
 .donut-legend span {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .donut-legend b { font-weight: 700; color: var(--ink-1); flex: 0 0 auto; }
@@ -12870,7 +12886,9 @@ window.PF_CONFIG = {
             '<button type="button" class="btn btn-line btn-sm data-danger" data-reset>清空并重来</button>' +
           '</div>' +
           '<p class="data-meta">数据版本 ' + esc(String(Store.VERSION)) +
-            '｜演示种子 ' + esc(String(Store.SEED_VER || '')) +
+            (cloudOn()
+              ? '｜云端同步'
+              : '｜演示种子 ' + esc(String(Store.SEED_VER || ''))) +
             '｜导入时会校验文件来源</p>' +
         '</div>' +
       '</section>';

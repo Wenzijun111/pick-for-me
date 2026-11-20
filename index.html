@@ -8566,6 +8566,25 @@ window.PF_CONFIG = {
   }
 
   /** 云端投票并进本地；本地独有的（离线时投的）补传上去 */
+  /** 云端已经删掉的投票，本地也要清掉。
+      只在「本地这条是从云端拉下来过的」（remote 标记）时才动手，
+      新建但还没推上去的投票不会被误删；种子数据（isDemo）也不碰。 */
+  function pruneDeleted(rows) {
+    if (!rows || !rows.length) return 0;
+    var live = {};
+    rows.forEach(function (r) { if (r && r.id) live[r.id] = 1; });
+    var n = 0;
+    ['polls', 'history'].forEach(function (bucket) {
+      Store.list(bucket).forEach(function (p) {
+        if (!p || !p.id || !p.remote || live[p.id] || pendingPush[p.id]) return;
+        if (isDemo(p)) return;
+        Store.remove(bucket, p.id);
+        n += 1;
+      });
+    });
+    return n;
+  }
+
   function merge(rows, voteRows) {
     var byPoll = {};
     (voteRows || []).forEach(function (v) {
@@ -8612,6 +8631,7 @@ window.PF_CONFIG = {
       }
     });
     locked = false;
+    pruneDeleted(rows);
 
     var all = Store.list('polls').concat(Store.list('history') || []);
     all.forEach(function (p) {
@@ -8636,6 +8656,7 @@ window.PF_CONFIG = {
       got += 1;
     });
     locked = false;
+    if (table === 'polls') pruneDeleted(rows);
     return got;
   }
 

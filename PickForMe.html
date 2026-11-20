@@ -5800,9 +5800,25 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
    * @param {Array}  [voteList] 可传入一组票，默认用 poll.votes（留一法要用）
    * @returns {{rows:Array, total:number, max:number, winners:Array, tie:boolean}}
    */
+  /**
+   * 只留当前轮的票。
+   * 开新一轮时 roundStartedAt 会被刷新，早于它的票属于上一轮：
+   * 云端可能因为旧数据被拉回来，不挡就会让新一轮的票数从上一轮接着涨。
+   * 票没有 at（老数据）时按保留处理，宁可多算也不误删。
+   */
+  function roundVotesOf(poll, list) {
+    var votes = list || (poll && poll.votes) || [];
+    var since = poll && poll.roundStartedAt ? Date.parse(poll.roundStartedAt) : 0;
+    if (!since) return votes;
+    return votes.filter(function (v) {
+      var t = Date.parse((v && v.at) || '');
+      return !t || t >= since;
+    });
+  }
+
   function tallyWith(poll, voteList) {
     var opts = poll.options || [];
-    var votes = voteList || poll.votes || [];
+    var votes = roundVotesOf(poll, voteList);
     var score = {};
     opts.forEach(function (o) { score[o.id] = 0; });
 
@@ -6124,6 +6140,10 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     uid: uid,
 
     /* 公开的计票入口 */
+    roundVotes: function (poll) {
+      return roundVotesOf(poll);
+    },
+
     tally: function (poll) {
       return tallyWith(poll, null);
     },
@@ -6600,7 +6620,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     myVoteIn: function (poll) {
       var me = Store.meId();
       if (!me) return null;
-      var votes = poll.votes || [];
+      var votes = roundVotesOf(poll);
       var hit = null;
       votes.forEach(function (v) { if (v.voterId === me) hit = v; });
       return hit;
@@ -10879,10 +10899,10 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
                         '<b>开第 ' + esc(openRound + 1) + ' 轮</b>' +
                         '<span class="owner-sub">当前是第 ' + esc(openRound) + ' 轮。' +
                         '开下一轮会把这一轮的票冻结存档、票数从零重算，投过的人会收到通知。' +
-                        ((poll.votes || []).length ? '' : ' 现在还没人投，开了也只是空转。') + '</span>' +
+                        ((Store.roundVotes(poll).length) ? '' : ' 现在还没人投，开了也只是空转。') + '</span>' +
                       '</div>' +
                       '<button type="button" class="btn btn-line btn-sm" data-next-round="1"' +
-                        ((poll.votes || []).length ? '' : ' disabled') + '>开下一轮</button>' +
+                        ((Store.roundVotes(poll).length) ? '' : ' disabled') + '>开下一轮</button>' +
                     '</div>'
                   : '') +
                 '<div class="owner-row owner-row-end">' +
@@ -10899,8 +10919,8 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
     /* --- 投票人：仅实名投票展示。这里也是信用徽章与隐私开关的对外落点 --- */
     var voterList = '';
-    if (!poll.anonymous && (poll.votes || []).length) {
-      var vItems = poll.votes.map(function (v) {
+    if (!poll.anonymous && Store.roundVotes(poll).length) {
+      var vItems = Store.roundVotes(poll).map(function (v) {
         var c = Store.creditOf(v.voterId);
         var badge = (global.Credit && c) ? Credit.badgeHtml(v.voterId, false) : '';
         var name = (c && c.name) || v.by || '匿名';
@@ -11031,7 +11051,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
    * 匿名投票在这里也只有"多少人、多少票"，不会因为要看摘要而暴露个人选择。
    */
   function recapHtml(poll, t) {
-    var votes = poll.votes || [];
+    var votes = Store.roundVotes(poll);
     var people = {};
     votes.forEach(function (v) { if (v.voterId) people[v.voterId] = 1; });
     var peopleCount = Object.keys(people).length;
@@ -11133,7 +11153,8 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       if (!meId) { askLogin('#/poll/' + poll.id); return; }
 
       var me = getMe();
-      var votes = (poll.votes || []).filter(function (v) { return v.voterId !== meId; });
+      /* 只基于当前轮的票重写，上一轮的残留不会跟着写回去 */
+      var votes = Store.roundVotes(poll).filter(function (v) { return v.voterId !== meId; });
       var prev = myVoteOf(poll);
       var round = poll.reopenRound || 0;
 

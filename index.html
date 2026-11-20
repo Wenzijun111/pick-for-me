@@ -597,7 +597,7 @@ button { font: inherit; cursor: pointer; }
 /* 主链路横跨整行，内部左右分栏：左边讲价值，右边放三步流程 */
 .zone--main {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(190px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 26px;
   background:
@@ -10152,11 +10152,6 @@ window.PF_CONFIG = {
                 '<span class="tag">分歧参考</span>' +
               '</div>' +
               '<div class="go">发起投票 →</div>' +
-            '</div>' +
-            '<div class="zone-steps" aria-hidden="true">' +
-              '<div class="step"><b>1</b><span>列出候选，写清价格参数</span></div>' +
-              '<div class="step"><b>2</b><span>发给人投，或自己打分</span></div>' +
-              '<div class="step"><b>3</b><span>拿到一句能执行的结论</span></div>' +
             '</div>' +
           '</a>' +
           '<a class="zone zone--guides" href="#/guides">' +

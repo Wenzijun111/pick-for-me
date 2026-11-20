@@ -7199,7 +7199,7 @@ window.PF_CONFIG = {
      *
      * @returns {{ok:boolean, reason:string, option:Object|null, round:number}}
      */
-    addOptionDuringPoll: function (poll, input) {
+    addOptionDuringPoll: function (poll, input, by) {
       if (!poll) return { ok: false, reason: 'missing', option: null, round: 0 };
       if (!poll.allowAddOption) {
         return { ok: false, reason: 'closed', option: null, round: poll.reopenRound || 0 };
@@ -7235,7 +7235,24 @@ window.PF_CONFIG = {
       }]);
       Store.save('polls', poll);
 
-      return { ok: true, reason: '', option: option, round: poll.reopenRound };
+      /* 通知投过票的人：多了候选，可以改投一次（旧票仍然有效） */
+      var actor = by || Store.meId();
+      var seen = {};
+      var sent = 0;
+      (poll.votes || []).forEach(function (v) {
+        var vid = v && v.voterId;
+        if (!vid || vid === actor || seen[vid]) return;
+        seen[vid] = 1;
+        Store.deliver(vid, {
+          type: 'option',
+          title: '「' + String(poll.title).slice(0, 20) + '」新增了一个候选',
+          body: '新加了「' + option.name + '」。你之前的票仍然有效，也可以改投一次。',
+          href: '#/poll/' + poll.id
+        });
+        sent++;
+      });
+
+      return { ok: true, reason: '', option: option, round: poll.reopenRound, notified: sent };
     },
 
     /** 这一票是不是在上一轮投的（新增候选后需要重投） */
@@ -11258,7 +11275,7 @@ window.PF_CONFIG = {
         name: name,
         price: priceEl ? priceEl.value : '',
         params: params
-      });
+      }, Store.meId());
 
       if (!r.ok) {
         if (r.reason === 'too-many') D.toast('最多 12 个候选');
@@ -11267,7 +11284,9 @@ window.PF_CONFIG = {
         return;
       }
 
-      D.toast('已新增「' + r.option.name + '」，第 ' + r.round + ' 轮重投已开放');
+      D.toast('已新增「' + r.option.name + '」' +
+        (r.notified ? '，已通知 ' + r.notified + ' 位投过票的人' : '') +
+        '。之前的票仍然有效，也可以改投');
       rerender();
     });
 

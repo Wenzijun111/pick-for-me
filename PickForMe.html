@@ -7310,6 +7310,11 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         at: nowIso, type: 'new-round', round: poll.round, prevLead: lead
       }]);
       Store.save('polls', poll);
+      /* 本地票清了，云端也得清：不然刷新/换设备一拉，上一轮的票又回来了，
+         新一轮的票数就不是从 0 开始。 */
+      try {
+        if (window.PFSync && typeof PFSync.clearVotes === 'function') PFSync.clearVotes(poll.id);
+      } catch (e) {}
 
       var sent = 0;
       Object.keys(voters).forEach(function (vid) {
@@ -8348,6 +8353,14 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     }).catch(fail);
   }
 
+  /** 一场投票的所有票都删掉：开新一轮时用，否则上一轮的票会被拉回来 */
+  function clearVotes(pollId) {
+    if (!ON || locked || !pollId) return Promise.resolve(0);
+    return api('votes?poll_id=eq.' + encodeURIComponent(pollId), { method: 'DELETE', prefer: 'return=minimal' })
+      .then(function () { return 1; })
+      .catch(function () { return 0; });
+  }
+
   function deleteRow(table, id) {
     if (!ON || locked || !id) return;
     api(table + '?id=eq.' + encodeURIComponent(id), { method: 'DELETE', prefer: 'return=minimal' })
@@ -8543,6 +8556,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     pending: function (id) { return !!pendingPush[id]; },
     onSave: onSave,
     onWrite: onWrite,
+    clearVotes: clearVotes,
     tables: TABLES.slice(),
 
     /* 本地没有这条投票时，去云端取一次；取不到就回 null */
@@ -13999,9 +14013,14 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     panel.addEventListener('click', function (e) {
       var item = e.target.closest('[data-msg]');
       if (!item) return;
+      /* 一定要拦住默认跳转：紧接着的 paintChrome() 会重写列表，
+         被点的那条 <a> 会从 DOM 里消失，浏览器就把这次跳转取消了。 */
+      e.preventDefault();
+      var href = item.getAttribute('href') || '#/';
       Store.markRead(item.getAttribute('data-msg'));
       close();
       paintChrome();
+      if (location.hash !== href) location.hash = href;
     });
 
     var all = document.getElementById('msgReadAll');

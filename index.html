@@ -8426,6 +8426,7 @@ window.PF_CONFIG = {
     if (!ON || locked) return;
     if (isDemo(poll) || !realPoll(poll)) return;
     if (isTomb(poll.id)) return;             /* 删过的不要再推回去 */
+    if (!whoami()) return;                    /* 没有登录会话就不往公共列表里写 */
     pendingPush[poll.id] = true;
     var job = api('polls', {
       method: 'POST',
@@ -8459,6 +8460,7 @@ window.PF_CONFIG = {
     /* 种子里的假投票人（u_me / u6 / u_bad / g_dead*）的票不上云，
        否则会出现「3 票」但点开看不到是谁投的假数据 */
     if (/^(u_me|u6|u_bad|g_dead\d+)$/.test(String(vote.voterId))) return;
+    if (!whoami()) return;                    /* 没登录会话的票不上云 */
     var rid = voteRowId(pollId, vote.voterId);
     var row = { id: rid, poll_id: pollId, voter_id: whoami(vote.voterId), payload: vote };
     /* votes 表对匿名只开了 SELECT / INSERT / DELETE，没有 UPDATE，

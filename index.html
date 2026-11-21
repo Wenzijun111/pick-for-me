@@ -9638,17 +9638,24 @@ window.PF_CONFIG = {
       });
       if (!mine) return;
 
-      // 剔除自己后算共识
-      var rest = (p.votes || []).filter(function (v) { return v.id !== mine.id; });
+      var valid = (p.votes || []).filter(function (v) { return v.voterId && credits[v.voterId]; });
+      var rest = valid.filter(function (v) { return v.id !== mine.id; });
       var t = Store.tally({
         options: p.options,
         type: p.type,
         votes: rest
       });
 
-      var consensus = t.tie ? null : (t.winners[0] ? t.winners[0].option : null);
+      /* 与 Store.computeCredits 的口径对齐：总人数不足 3 人整场不计入；
+         剔除自己后没人、或其他人之间平票，也都不计入。 */
+      var why = '';
+      if (valid.length < 3) why = '人数不足（' + valid.length + ' 人参与，至少 3 人）';
+      else if (t.total === 0) why = '没有其他人参与';
+      else if (t.tie) why = '其他人之间平票';
+
+      var consensus = why ? null : (t.winners[0] ? t.winners[0].option : null);
       var myChoiceIds = mine.choice || [];
-      var hit = consensus ? myChoiceIds.indexOf(consensus.id) >= 0 : null;
+      var hit = consensus ? (myChoiceIds.indexOf(consensus.id) >= 0 ? 1 : 0) : null;
 
       var myNames = myChoiceIds.map(function (oid) {
         var o = (p.options || []).filter(function (x) { return x.id === oid; })[0];
@@ -9658,7 +9665,8 @@ window.PF_CONFIG = {
       rows.push({
         poll: p,
         myNames: myNames,
-        consensus: consensus ? consensus.name : '平票（不计入）',
+        consensus: consensus ? consensus.name : '',
+        why: why,
         hit: hit,
         tie: t.tie,
         tags: mine.tags || []
@@ -9744,8 +9752,8 @@ window.PF_CONFIG = {
 
     var list = rows.length ? rows.map(function (r) {
       var mark;
-      if (r.tie) mark = '<span class="tag">平票 · 不计入</span>';
-      else if (r.hit) mark = '<span class="tag ok">与共识一致</span>';
+      if (r.why) mark = '<span class="tag">不计入</span>';
+      else if (r.hit === 1) mark = '<span class="tag ok">与共识一致</span>';
       else mark = '<span class="tag warn">偏离共识</span>';
 
       var tagTxt = r.tags.length
@@ -9760,7 +9768,9 @@ window.PF_CONFIG = {
               esc(r.poll.title) +
             '</div>' +
             '<div class="credit-row-detail">' +
-              '你的选择：<b>' + esc(r.myNames) + '</b>　·　其余人的共识：<b>' + esc(r.consensus) + '</b>' +
+              (r.why
+                ? '你的选择：<b>' + esc(r.myNames) + '</b>　·　不计入原因：<b>' + esc(r.why) + '</b>'
+                : '你的选择：<b>' + esc(r.myNames) + '</b>　·　其余人的共识：<b>' + esc(r.consensus) + '</b>') +
               (tagTxt ? '　·　动机：' + esc(tagTxt) : '') +
             '</div>' +
           '</div>' +
@@ -9794,7 +9804,9 @@ window.PF_CONFIG = {
 
       '<section class="section">' +
         '<div class="section-head"><h2>我的判断记录</h2>' +
-          '<span class="hint">' + rows.length + ' 条</span></div>' +
+          '<span class="hint">' + rows.length + ' 条' +
+            (rows.length ? ' · 计入信用 ' + rows.filter(function (r) { return !r.why; }).length + ' 条' : '') +
+          '</span></div>' +
         '<div class="credit-list">' + list + '</div>' +
       '</section>' +
 

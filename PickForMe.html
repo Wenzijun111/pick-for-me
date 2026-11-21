@@ -13935,7 +13935,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     var text = '1500 左右的降噪耳机，通勤用';
     var design = (window.Designer && typeof window.Designer.build === 'function')
       ? window.Designer.build({ text: text })
-      : { ok: false, error: 'poll-designer 镜像没加载' };
+      : { ok: false, error: '候选起草模块没加载' };
 
     steps.push({
       input: { text: text },
@@ -13990,7 +13990,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     /* 03 计票 */
     var ev = (window.Decision && typeof window.Decision.evaluate === 'function')
       ? window.Decision.evaluate({ poll: poll, now: nowIso })
-      : { ok: false, error: 'poll-result 镜像没加载' };
+      : { ok: false, error: '计票模块没加载' };
     var result = (ev && ev.ok) ? ev.result : null;
     var winRow = null;
     if (result && result.winners && result.winners.length) {
@@ -14014,7 +14014,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     if (result) {
       var gd = (window.Guide && typeof window.Guide.build === 'function')
         ? window.Guide.build({ poll: poll, result: result })
-        : { ok: false, error: 'guide-writer 镜像没加载' };
+        : { ok: false, error: '攻略生成模块没加载' };
       var d = (gd && gd.draft) || {};
       steps.push({
         input: { pollId: poll.id, winnerId: result.winners[0] || null },
@@ -14045,7 +14045,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     ];
     var sw = (window.SwapMatch && typeof window.SwapMatch.build === 'function')
       ? window.SwapMatch.build({ now: nowIso, me: { id: 'u_flow' }, mine: mine, list: list, limit: 5 })
-      : { ok: false, error: 'swap-matcher 镜像没加载' };
+      : { ok: false, error: '交换匹配模块没加载' };
     steps.push({
       input: { mine: mine.length, list: list.length, now: nowIso },
       output: sw,

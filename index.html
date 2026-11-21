@@ -10995,21 +10995,21 @@ window.PF_CONFIG = {
     }
 
     /* --- 计算来源徽章（v0.1.5）---
-       默认走技能内核；点右侧按钮切到本地预演，选择记在 localStorage。
+       默认走规则内核；点右侧按钮切到本地预演，选择记在 localStorage。
        只影响这一页的结论展示，票数本身不变。 */
     var srcBar = '' +
       '<div class="src-bar">' +
         '<span class="src-badge' + (t._source === 'skill' ? ' is-skill' : '') + '"' +
           ' title="' + (t._source === 'skill'
-            ? '结论由 poll-result 内核计算（与技能同源的浏览器镜像），不是远程调用平台'
+            ? '结论由 pure/decision.js 里的规则算出，用的就是页面加载的同一份代码，不是远程调用平台'
             : '结论由 store.js 本地计算，v0.1.0 以来的旧逻辑') + '">' +
-          (t._source === 'skill' ? '技能内核' : '本地预演') +
+          (t._source === 'skill' ? '规则内核' : '本地预演') +
         '</span>' +
         '<span class="src-note">' + (t._source === 'skill'
-          ? '与 .opencode/skills/poll-result 同一套算法'
+          ? '与 pure/decision.js 同一套算法'
           : '旧逻辑，用来对比两套结果是否一致') + '</span>' +
         '<button type="button" class="src-toggle" data-toggle-src="1">' +
-          '切到' + (t._source === 'skill' ? '本地预演' : '技能内核') +
+          '切到' + (t._source === 'skill' ? '本地预演' : '规则内核') +
         '</button>' +
       '</div>';
 
@@ -11760,7 +11760,7 @@ window.PF_CONFIG = {
     D.on(root, 'click', '[data-toggle-src]', function () {
       var next = Store.computeSource() === 'skill' ? 'local' : 'skill';
       Store.setComputeSource(next);
-      D.toast(next === 'skill' ? '已切到技能内核' : '已切到本地预演');
+      D.toast(next === 'skill' ? '已切到规则内核' : '已切到本地预演');
       rerender();
     });
 
@@ -11871,7 +11871,7 @@ window.PF_CONFIG = {
   }
 
   /** 从投票生成攻略草稿（四区块结构）
-      优先交给 guide-writer 技能（浏览器镜像），镜像缺失或抛错时回退下面的本地实现。 */
+      优先交给 pure/guide.js 的规则内核，缺失或抛错时回退下面的本地实现。 */
   function guideFromPoll(poll) {
     if (typeof Guide !== 'undefined' && Guide && Guide.build) {
       try {
@@ -13862,16 +13862,16 @@ window.PF_CONFIG = {
   /* ============================================================
      链路演示（#/flow）
      ------------------------------------------------------------
-     把四个技能串起来跑一遍，每步展开看输入输出。
+     把四段判定串起来跑一遍，每步展开看输入输出。
      数据全在内存里，不写 localStorage——演示不污染用户数据。
      ============================================================ */
 
   var FLOW_STEPS = [
-    { n: '01', name: '起草候选', skill: 'poll-designer', note: '一句话 → 品类 / 预算 / 参数 / 三个候选' },
-    { n: '02', name: '发起投票', skill: '—', note: '候选进表单，人开始投' },
-    { n: '03', name: '计票出结论', skill: 'poll-result', note: '票数 / 平票建议 / 门槛 / 信用' },
-    { n: '04', name: '沉淀攻略', skill: 'guide-writer', note: '结论 → 四区块，存进知识库' },
-    { n: '05', name: '交换匹配', skill: 'swap-matcher', note: '品类 / 价值 / 成色 / 新鲜度打分排序' }
+    { n: '01', name: '起草候选', core: 'pure/design.js', note: '一句话 → 品类 / 预算 / 参数 / 三个候选' },
+    { n: '02', name: '发起投票', core: '', note: '候选进表单，人开始投' },
+    { n: '03', name: '计票出结论', core: 'pure/decision.js', note: '票数 / 平票建议 / 门槛 / 信用' },
+    { n: '04', name: '沉淀攻略', core: 'pure/guide.js', note: '结论 → 四区块，存进知识库' },
+    { n: '05', name: '交换匹配', core: 'pure/swap.js', note: '品类 / 价值 / 成色 / 新鲜度打分排序' }
   ];
 
   function flowJson(x) {
@@ -14012,13 +14012,13 @@ window.PF_CONFIG = {
   }
 
   function flowStepHtml(s, i) {
-    var meta = FLOW_STEPS[i] || { n: String(i + 1), name: s.key || '', skill: '', note: '' };
+    var meta = FLOW_STEPS[i] || { n: String(i + 1), name: s.key || '', core: '', note: '' };
     var ok = !(s.output && s.output.ok === false);
     return '<div class="flow-step' + (ok ? ' is-ok' : ' is-err') + '">' +
       '<div class="flow-head">' +
         '<span class="flow-n">' + esc(meta.n) + '</span>' +
         '<b class="flow-name">' + esc(meta.name) + '</b>' +
-        (meta.skill !== '—' ? '<span class="chip-sm">' + esc(meta.skill) + '</span>' : '') +
+        (meta.core ? '<span class="chip-sm">' + esc(meta.core) + '</span>' : '') +
         '<span class="flow-flag">' + (ok ? '✓ 跑通' : '✕ 没跑通') + '</span>' +
       '</div>' +
       '<p class="flow-note">' + esc(meta.note) + '</p>' +
@@ -14041,7 +14041,7 @@ window.PF_CONFIG = {
         '<a class="btn btn-line btn-sm" href="#/">回到帮我选</a>') +
       '<div class="notice" style="margin-bottom:14px">' +
         '<div>这条链路跑在浏览器里：<b>起草候选 → 发起投票 → 计票 → 沉淀攻略 → 交换匹配</b>。' +
-        '每一步都调对应技能的内核，输入输出都能展开看。演示用内存数据，' +
+        '每一步都调对应的规则代码，输入输出都能展开看。演示用内存数据，' +
         '<b>不会写进你的本机存储</b>。同一份输入重跑一次，结果应该一模一样。</div>' +
       '</div>' +
       '<div class="flow-list">' + steps.map(flowStepHtml).join('') + '</div>' +

@@ -774,6 +774,15 @@ button { font: inherit; cursor: pointer; }
 }
 
 :root[data-skin="y2k"] .tag { border-style: dashed; }
+/* 领先者名字：限宽省略，避免长名字把卡片挤乱 */
+.tag-lead {
+  max-width: 16em;
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: text-bottom;
+}
 
 .tag.brand { background: var(--brand-soft); border-color: var(--brand-line); color: var(--brand-ink); }
 .tag.accent { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
@@ -10214,14 +10223,16 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     var timing = Store.pollTiming(p);
     /* 进行中不叫「已有结论」——1 票也能叫结论会误导。
        进行中只说「暂时领先」，真正的结论留给结束态。
-       不把候选名塞进标签：名字一长就把「场景」标签挤到下一行，卡片变高变乱。 */
+       领先者名字放进 .tag-lead（限宽 + 省略号），名字再长也不会把「场景」标签挤到下一行。 */
     var tag = Store.isClosed(p)
       ? '<span class="tag">' + (p.archived ? '已结束' : '已截止') + '</span>'
       : (t.total === 0
           ? '<span class="tag">还没人投</span>'
           : (t.tie
               ? '<span class="tag warn">平票</span>'
-              : '<span class="tag ok">暂时领先</span>'));
+              : (t.winners[0]
+                  ? '<span class="tag ok tag-lead" title="暂时领先：' + esc(t.winners[0].option.name) + '">暂时领先 · ' + esc(t.winners[0].option.name) + '</span>'
+                  : '<span class="tag ok">暂时领先</span>')));
     var deadlineTag = (!Store.isClosed(p) && timing.hasDeadline)
       ? '<span class="tag">' + esc(timing.short) + '后截止</span>'
       : '';
@@ -10284,7 +10295,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
       '<div class="designer" id="designer">' +
         '<div class="designer-head">' +
-          '<span class="designer-badge">poll-designer</span>' +
+          '<span class="designer-badge">需求快写</span>' +
           '<span class="designer-hint">写一句需求，自动起草候选。规则匹配，只认常见品类，不编参数。</span>' +
         '</div>' +
         '<div class="designer-row">' +
@@ -10810,7 +10821,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
 
   function renderPollGone(id) {
     return statePage({
-      tone: 'muted', code: '404', icon: '?',
+      tone: 'muted', code: '404', icon: '🧭',
       title: '这个投票不存在了',
       text: '可能是链接被截断、少了几位；也可能发起者把它删掉了。已经结束的投票仍然能打开。',
       detail: '<div class="state-kv"><span>你打开的投票 id</span><code>' + esc(id || '（空）') + '</code></div>',
@@ -11025,15 +11036,15 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       '<div class="src-bar">' +
         '<span class="src-badge' + (t._source === 'skill' ? ' is-skill' : '') + '"' +
           ' title="' + (t._source === 'skill'
-            ? '结论由 pure/decision.js 里的规则算出，用的就是页面加载的同一份代码，不是远程调用平台'
-            : '结论由 store.js 本地计算，v0.1.0 以来的旧逻辑') + '">' +
-          (t._source === 'skill' ? '规则内核' : '本地预演') +
+            ? '结论由页面里的规则函数直接算出，不依赖任何远程服务'
+            : '用早期的算法再算一遍，方便对照') + '">' +
+          (t._source === 'skill' ? '现行规则' : '旧算法对照') +
         '</span>' +
         '<span class="src-note">' + (t._source === 'skill'
-          ? '与 pure/decision.js 同一套算法'
-          : '旧逻辑，用来对比两套结果是否一致') + '</span>' +
+          ? '和页面其他位置用的是同一套规则'
+          : '两套算法结果一致，说明改版没有算错') + '</span>' +
         '<button type="button" class="src-toggle" data-toggle-src="1">' +
-          '切到' + (t._source === 'skill' ? '本地预演' : '规则内核') +
+          '换成' + (t._source === 'skill' ? '旧算法对照' : '现行规则') +
         '</button>' +
       '</div>';
 
@@ -11784,7 +11795,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     D.on(root, 'click', '[data-toggle-src]', function () {
       var next = Store.computeSource() === 'skill' ? 'local' : 'skill';
       Store.setComputeSource(next);
-      D.toast(next === 'skill' ? '已切到规则内核' : '已切到本地预演');
+      D.toast(next === 'skill' ? '已换回现行规则' : '已换成旧算法对照');
       rerender();
     });
 
@@ -12010,13 +12021,16 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     var kw = q.q || '';
     var guides = Store.findGuides(kw, cat);
     var total = Store.guides().length;
+    var headCount = (kw || cat !== 'all')
+      ? guides.length + ' 篇（共 ' + total + ' 篇）'
+      : total + ' 篇';
 
     var grid = guides.length
       ? guides.map(guideCardHtml).join('')
       : emptyBox('没有匹配的攻略', '换个关键词，或切回"全部"分类。', '');
 
     return '' +
-      pageHead('选品攻略', total + ' 篇 · 四区块结构',
+      pageHead('选品攻略', headCount + ' · 四区块结构',
         '<a class="btn btn-primary btn-sm" href="#/guide/new">投稿攻略</a>') +
       subTabs('guides') +
       '<div class="notice" style="margin-bottom:14px">' +
@@ -12117,7 +12131,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     var g = Store.guide(id);
     if (!g) {
       return statePage({
-        tone: 'muted', code: '404', icon: '?',
+        tone: 'muted', code: '404', icon: '🧭',
         title: '这篇攻略不存在了',
         text: '可能是作者删掉了它，也可能链接少了几位。攻略广场里的其它几篇还在。',
         detail: '<div class="state-kv"><span>你打开的攻略 id</span><code>' + esc(id || '（空）') + '</code></div>',
@@ -12342,7 +12356,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
             '<h3>' + esc(s.have.name) + '</h3>' +
             '<p class="swap-want">想换：' + esc(s.want.name) + '</p>' +
             '<p class="swap-meta">' + esc(s.have.condition || '') +
-              ' · 参考 ' + esc(price(s.have.value)) +
+              (s.have.value ? ' · 参考 ' + esc(price(s.have.value)) : '') +
               ' · 门槛 ' + esc(gate.label) +
               ' · ' + esc(ago(s.createdAt)) + '</p>' +
             '<div class="swap-owner">' + ownerBadge(s.owner) +
@@ -12507,7 +12521,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     var s = Store.swap(id);
     if (!s) {
       return statePage({
-        tone: 'muted', code: '404', icon: '?',
+        tone: 'muted', code: '404', icon: '🧭',
         title: '这条交换不在了',
         text: '可能是对方已经下架，或者链接少了几位。广场上还有别的物品在等新主人。',
         detail: '<div class="state-kv"><span>你打开的交换 id</span><code>' + esc(id || '（空）') + '</code></div>',
@@ -12602,7 +12616,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
               '<span class="chip-sm">' + esc(s.have.condition || '') + '</span>' +
             '</div>' +
             '<h1>' + esc(s.have.name) + '</h1>' +
-            '<p class="swap-value">参考价 ' + esc(price(s.have.value)) + '</p>' +
+            '<p class="swap-value">' + (s.have.value ? '参考价 ' + esc(price(s.have.value)) : '价格面议') + '</p>' +
             (s.have.desc ? '<p class="swap-desc">' + esc(s.have.desc) + '</p>' : '') +
           '</div>' +
         '</div>' +
@@ -12611,7 +12625,11 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
             '<h3 class="swap-h">想换什么</h3>' +
             '<p class="swap-want-big">' + esc(s.want.name) + '</p>' +
             '<p class="swap-meta">' + esc(s.want.category || '不限') + ' · ' +
-              esc(price(s.want.valueMin)) + '—' + esc(price(s.want.valueMax)) + '</p>' +
+              (s.want.valueMin || s.want.valueMax
+                ? (s.want.valueMin && s.want.valueMax
+                    ? esc(price(s.want.valueMin)) + '—' + esc(price(s.want.valueMax))
+                    : (s.want.valueMax ? esc(price(s.want.valueMax)) + ' 以内' : esc(price(s.want.valueMin)) + ' 起'))
+                : '价格面议') + '</p>' +
             (s.want.desc ? '<p class="swap-desc">' + esc(s.want.desc) + '</p>' : '') +
           '</div>' +
           '<div class="card">' +
@@ -12790,15 +12808,15 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
           name: val('#sHaveName'),
           condition: val('#sCond'),
           category: val('#sCat'),
-          value: Number(val('#sValue')) || 0,
+          value: val('#sValue') === '' ? null : Number(val('#sValue')),
           desc: val('#sDesc'),
           images: val('#sImages').split('\n')
         },
         want: {
           name: val('#sWantName'),
           category: val('#sWantCat'),
-          valueMin: Number(val('#sWantMin')) || 0,
-          valueMax: Number(val('#sWantMax')) || 0,
+          valueMin: val('#sWantMin') === '' ? null : Number(val('#sWantMin')),
+          valueMax: val('#sWantMax') === '' ? null : Number(val('#sWantMax')),
           desc: val('#sWantDesc')
         },
         minTier: tierEl ? tierEl.value : 'all',
@@ -13427,6 +13445,8 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
   }
 
   function bindLogin(root, rerender) {
+    /* 已登录时页面只显示「已经登录了」，没有登录表单，绑定直接跳过 */
+    if (!D.$('#loginForm', root)) return;
     var method = (window.PFAuth && window.PFAuth.enabled()) ? 'email' : 'phone';
 
     function applyMethod(m) {
@@ -13440,6 +13460,9 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
       var cl = D.$('#lgContactLabel', root);
       var sl = D.$('#lgSecretLabel', root);
       var send = D.$('#sendCode', root);
+
+      /* 已登录时页面只显示「已经登录了」，没有表单元素，直接返回 */
+      if (!contact || !secret || !cl || !sl) return;
 
       if (m === 'phone') {
         cl.textContent = '手机号';
@@ -13550,7 +13573,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     return statePage({
       tone: 'muted',
       code: '404',
-      icon: '?',
+      icon: '🧭',
       title: '这个地址没有内容',
       text: '链接可能拼错、被聊天工具截断，或者这条内容已经被删掉了。三种区都还在，从下面挑一个入口就行。',
       detail: '<div class="state-kv"><span>你打开的地址</span><code>' + esc(path) + '</code></div>',
@@ -14117,8 +14140,7 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
         '<ul class="doc-ul">' +
           '<li>账号、投票、消息、收藏存放在<b>' + dataWhere() + '</b>；' + crossDevice() + '；</li>' +
           '<li>页面里的"妈 / 爸 / 二姨 / 同事小林"等是<b>演示数据</b>，不是真实用户；</li>' +
-          '<li>想清空这台设备上的数据：在浏览器里清除本站数据，或打开控制台执行 ' +
-            '<code>Store.reset()</code> 后刷新' +
+          '<li>想清空这台设备上的数据：在浏览器设置里清除本站的网站数据，再刷新页面即可' +
             (cloudOn() ? '（云端数据不受影响，重新登录会拉回来）' : '') + '；</li>' +
           '<li>匿名投票不会展示投票人；实名投票只展示昵称与档位，不展示手机号。</li>' +
           '<li>「仅链接可见」的投票不会出现在首页列表，' +

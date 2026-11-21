@@ -13028,6 +13028,7 @@ window.PF_CONFIG = {
           '<div class="me-meta">' +
             '参与 ' + c.n + ' 次 · 命中 ' + c.hit + ' 次 · 偏离 ' + Math.max(0, c.n - c.hit) + ' 次' +
             (hasSample ? '' : ' · 样本不足 5 次，暂不评档') +
+            (joined.length && c.n === 0 ? ' · 单场少于 3 人投票不计入统计' : '') +
           '</div>' +
         '</div>' +
         '<div class="me-card-side">' +

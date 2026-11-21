@@ -14508,22 +14508,80 @@ window.PF_CONFIG = { supabaseUrl: '', supabaseAnonKey: '' };
     bindChrome();
     render();
 
-    /* 页面从后台回到前台时补拉一次：别人刚结束的投票要立刻反映到列表与详情 */
-    document.addEventListener('visibilitychange', function () {
+    /* ---- 静默刷新 ----
+       页面在前台时每 30 秒看一眼云端，真有变化才重绘；没变化不动页面，
+       正在看的位置、填了一半的输入都不会被打断。 */
+    var AUTO_MS = 30000;
+    var TABLE_OF_ROUTE = {
+      guides: ['guides'], guide: ['guides'], kb: ['guides'],
+      swap: ['swaps', 'swapreqs'], me: ['favs', 'messages']
+    };
+    var lastSilent = 0;
+
+    /* 拿一份「现在页面上有什么」的指纹：条数、结束状态、谁投了什么。
+       刷新前后一样就说明没新东西，不要去动 DOM。 */
+    function stateFingerprint() {
+      var parts = [];
+      ['polls', 'history', 'guides', 'swaps', 'swapreqs', 'favs', 'messages'].forEach(function (t) {
+        (Store.list(t) || []).forEach(function (x) {
+          if (!x || !x.id) return;
+          var vs = (x.votes || []).map(function (v) {
+            return v.id + ':' + ((v.choice || []).join(','));
+          }).join(',');
+          parts.push(t + ':' + x.id + ':' + (x.archived ? 'A' : '') + ':' + vs);
+        });
+      });
+      return parts.sort().join('|');
+    }
+
+    function pullRouteTables(route, done) {
+      var list = TABLE_OF_ROUTE[route.name] || [];
+      if (!list.length || !window.PFSync || !window.PFSync.pullTable) { done(); return; }
+      var i = 0;
+      (function step() {
+        if (i >= list.length) { done(); return; }
+        window.PFSync.pullTable(list[i++], step);
+      })();
+    }
+
+    function silentRefresh(opts) {
+      opts = opts || {};
       if (document.hidden) return;
       if (!window.PFSync || !window.PFSync.refreshPolls) return;
-      window.PFSync.refreshPolls(function (n) {
-        if (!n) return;
-        var route = parse(location.hash);
-        /* 详情页只在「刚发现已经结束」时重绘，别因为一次后台刷新把阅读位置弹回顶部 */
-        if (route.name === 'poll' && route.id) {
-          var p = Store.getAnyPoll(route.id);
-          if (p && p.archived) render();
-          return;
-        }
-        render();
+      var now = Date.now();
+      if (!opts.force && now - lastSilent < 3000) return;
+      lastSilent = now;
+      var route = parse(location.hash);
+      if (route.name === 'new') return;                /* 正在填表单，别打断 */
+      var before = stateFingerprint();
+      window.PFSync.refreshPolls(function () {
+        pullRouteTables(route, function () {
+          if (stateFingerprint() === before) return;
+          /* 光标还在输入框里就不动：搜索词、昵称改到一半不能被吞掉 */
+          var ae = document.activeElement;
+          if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
+          /* 详情页只在「刚发现已结束」时重绘，别把阅读位置弹回顶部 */
+          if (route.name === 'poll' && route.id) {
+            var p = Store.getAnyPoll(route.id);
+            if (p && p.archived) render();
+            return;
+          }
+          render();
+        });
       });
+    }
+
+    /* 页面从后台回到前台：所有列表补拉一次 */
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) silentRefresh({ force: true });
     });
+    window.addEventListener('focus', function () { silentRefresh(); });
+
+    /* 停在页面上不动时，每 30 秒自己看一眼：哪个页面都生效，
+       当前路由对应的集合也会一起拉（首页拉投票、知识库拉攻略、交换拉物品与申请） */
+    if (window.PFSync && window.PFSync.enabled()) {
+      setInterval(function () { silentRefresh({ force: true }); }, AUTO_MS);
+    }
 
     if (seeded) D.toast('已载入演示数据，可以直接点开看看');
 

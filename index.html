@@ -7502,6 +7502,9 @@ window.PF_CONFIG = {
           /* 剔除自己那一票再算共识，和信用明细用的是同一个口径 */
           var rest = (p.votes || []).filter(function (v) { return v.id !== mine.id; });
           var t = Store.tally({ options: p.options, type: p.type, votes: rest });
+          /* 展示用的领先者要带上自己这一票：只剔除自己的话，一个人投票时永远算不出谁领先 */
+          var tShow = Store.tally({ options: p.options, type: p.type, votes: (p.votes || []) });
+          var shown = tShow.tie ? null : (tShow.winners[0] ? tShow.winners[0].option : null);
           var consensus = t.tie ? null : (t.winners[0] ? t.winners[0].option : null);
           var hit = consensus ? (mine.choice || []).indexOf(consensus.id) >= 0 : null;
 
@@ -7511,8 +7514,8 @@ window.PF_CONFIG = {
             isOwner: p.owner === voterId,
             closed: Store.isClosed(p),
             total: (p.votes || []).length,
-            lead: consensus ? consensus.name : '',
-            tie: !!t.tie,
+            lead: shown ? (shown.name || shown.text || '') : '',
+            tie: !!tShow.tie,
             hit: hit,
             fromHistory: group.fromHistory
           });
@@ -12915,8 +12918,8 @@ window.PF_CONFIG = {
       }).filter(Boolean).join('、');
 
       var verdict = j.closed
-        ? (j.tie ? '最后打平收场' : ('最终是「' + j.lead + '」'))
-        : (j.tie ? '暂时平票' : ('当前领先「' + j.lead + '」'));
+        ? (j.tie ? '最后打平收场' : ('最终是「' + (j.lead || '暂无') + '」'))
+        : (j.tie ? '暂时平票' : ('当前领先「' + (j.lead || '暂无') + '」'));
       var badge = j.closed
         ? (j.hit === true ? '<span class="tag ok">命中</span>'
            : (j.hit === false ? '<span class="tag">未命中</span>' : '<span class="tag">平票</span>'))

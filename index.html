@@ -5831,7 +5831,7 @@ window.PF_CONFIG = {
 
   var NS = 'pf:';                 // localStorage 命名空间
   var SEED_FLAG = NS + 'seeded';
-  var SEED_VER = '11';             // 演示数据版本，改内容时递增
+  var SEED_VER = '12';             // 演示数据版本，改内容时递增
 
   /* 演示账号：手机号 + 任意 6 位验证码即可登录，绑到预置的「我」（u_me）。
      换别的联系方式登录会新建一个没有历史票的新账号，正好演示门槛拦截。 */
@@ -8297,7 +8297,53 @@ window.PF_CONFIG = {
         createdAt: new Date(now - 3 * day).toISOString()
       };
 
-      var seededPolls = [poll1, poll2, poll3, poll4, poll5, poll6, poll7, poll8];
+      /* ---- 演示投票 6：三款各两票，演示平票兜底（带价格，建议才有依据） ---- */
+      var poll9 = {
+        id: 'p_demo5',
+        title: '年会穿哪条裙子，三款各两票',
+        note: '预算 1000 以内，上台要一眼看出气质，别太夸张。三个人喜欢三款，群里谁也没说服谁。',
+        type: 'single',
+        anonymous: true,
+        visibility: 'public',
+        gate: 'all',
+        scene: 'family',
+        resultMode: 'full',
+        allowAddOption: false,
+        reopenRound: 0,
+        allowMultiRound: false,
+        round: 1,
+        roundLog: [],
+        deadline: new Date(now + 2 * day).toISOString(),
+        weights: { budget: 40, look: 30, occasion: 20, fit: 10 },
+        options: [
+          {
+            id: 'n1', name: '粉色公主裙，699', price: 699,
+            params: [{ k: '版型', v: '蓬蓬裙' }, { k: '场合', v: '年会、生日' }, { k: '面料', v: '缎面' }],
+            reason: '最便宜，也最挑身高'
+          },
+          {
+            id: 'n2', name: '白色素雅风，799', price: 799,
+            params: [{ k: '版型', v: 'A 字' }, { k: '场合', v: '年会、通勤' }, { k: '面料', v: '雪纺' }],
+            reason: '不挑人，但容易撞衫'
+          },
+          {
+            id: 'n3', name: '紫色庄重风，999', price: 999,
+            params: [{ k: '版型', v: '修身长裙' }, { k: '场合', v: '年会、正式' }, { k: '面料', v: '丝绒' }],
+            reason: '最显气质，价格也最高'
+          }
+        ],
+        votes: [
+          { id: 'nv1', voterId: 'u1', by: '妈', at: new Date(now - 5 * 3600 * 1000).toISOString(), choice: ['n1'], tags: ['used'] },
+          { id: 'nv2', voterId: 'u4', by: '二姨', at: new Date(now - 5 * 3600 * 1000).toISOString(), choice: ['n1'], tags: ['used'] },
+          { id: 'nv3', voterId: 'u3', by: '我姐', at: new Date(now - 4 * 3600 * 1000).toISOString(), choice: ['n2'], tags: ['expert'] },
+          { id: 'nv4', voterId: 'u6', by: '同事小林', at: new Date(now - 4 * 3600 * 1000).toISOString(), choice: ['n2'], tags: ['pref'] },
+          { id: 'nv5', voterId: 'u5', by: '邻居老周', at: new Date(now - 3 * 3600 * 1000).toISOString(), choice: ['n3'], tags: [] },
+          { id: 'nv6', voterId: 'u2', by: '爸', at: new Date(now - 3 * 3600 * 1000).toISOString(), choice: ['n3'], tags: ['used'] }
+        ],
+        createdAt: new Date(now - h6).toISOString()
+      };
+
+      var seededPolls = [poll9, poll1, poll2, poll3, poll4, poll5, poll6, poll7, poll8];
       seededPolls.forEach(function (p) { p.seed = 1; });
       /* 演示投票放前面，真实投票接在后面：
          整表覆盖会把别人刚发起的投票从本地列表里冲掉，同步层还会当成删除。 */
